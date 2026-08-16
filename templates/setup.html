@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Saleh Initial Setup</title><link rel="stylesheet" href="/static/style.css">
+<style>
+.authpage{min-height:100vh;display:grid;place-items:center;padding:24px;background:#f7f3e5 url('/static/background.png') center/cover no-repeat fixed}
+.authcard{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:28px;padding:28px;box-shadow:0 24px 70px #0002}
+.authbrand{font-size:30px;font-weight:900;letter-spacing:-1px}.autherror{display:none;background:#ffe8e5;color:#8e2f29;padding:11px 13px;border-radius:12px;margin:10px 0}
+</style></head>
+<body><div class="authpage"><div class="authcard">
+<div class="authbrand">SALEH.</div><span class="muted">First-time setup</span>
+<h1>Create the first Admin</h1><p class="muted">No password is stored in the public GitHub repository. Create your private admin credentials here.</p>
+<div id="err" class="autherror"></div>
+<div class="field"><label>Admin username</label><input id="username" autocomplete="username" autofocus></div>
+<div class="field"><label>Password</label><input id="password" type="password" autocomplete="new-password" placeholder="Minimum 10 characters"></div>
+<div class="field"><label>Confirm password</label><input id="confirm" type="password" autocomplete="new-password"></div>
+<button class="primary" onclick="setup()">Create Admin & Continue</button>
+</div></div>
+<script>
+async function setup(){err.style.display='none';if(password.value!==confirm.value){err.style.display='block';err.textContent='Passwords do not match';return}let r=await fetch('/api/auth/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.value,password:password.value})});let d=await r.json();if(!r.ok){err.style.display='block';err.textContent=d.detail||'Setup failed';return}location.href=d.redirect}
+confirm.addEventListener('keydown',e=>{if(e.key==='Enter')setup()});
+</script></body></html>

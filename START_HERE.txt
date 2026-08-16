@@ -1,0 +1,49 @@
+SALEH ORDER AHEAD V4 — READY TO TEST
+
+1) Extract the ZIP to a normal folder.
+2) Double-click START_WINDOWS.bat.
+3) The customer page will open:
+   http://localhost:8000/
+
+FIRST ADMIN SETUP
+-----------------
+Open:
+   http://localhost:8000/admin
+
+On the first run, the app sends you to Initial Setup.
+Create your own Admin username and password.
+No default password is stored in the project.
+
+AFTER LOGIN
+-----------
+Management:
+   http://localhost:8000/admin
+
+Branch 1:
+   http://localhost:8000/branch/1
+
+Customer:
+   http://localhost:8000/
+
+In Management, Admin can open "Users & Access" and create:
+- Admin
+- Manager
+- Branch Staff (assigned to one branch only)
+
+SUGGESTED TEST
+--------------
+1. Create Admin.
+2. Create a Branch Staff user for Branch 1.
+3. Open Customer in another/incognito browser.
+4. Place an order.
+5. Login as Branch Staff and open /branch/1.
+6. Accept -> Preparing -> complete Bar/Kitchen -> Ready -> Collected.
+7. Login as Admin and review Dashboard, Inventory and Reports.
+
+IMPORTANT
+---------
+- Current payment is mock/test payment only.
+- Direct ESC/POS printer integration is not enabled yet.
+- This testing build uses local SQLite.
+- saleh.db is excluded from GitHub by .gitignore.
+- Before real multi-branch production, use PostgreSQL.

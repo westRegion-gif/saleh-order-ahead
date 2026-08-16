@@ -1,0 +1,19 @@
+RAILWAY TESTING
+
+Upload the CONTENTS of this folder to your GitHub repository, not the ZIP file.
+
+Do NOT upload saleh.db. The included .gitignore excludes it.
+
+Railway can deploy using the included railway.json.
+
+After deployment:
+- Public customer URL: https://YOUR-DOMAIN/
+- Admin: https://YOUR-DOMAIN/admin
+- Branch 1: https://YOUR-DOMAIN/branch/1
+
+On a fresh deployment with no database, /admin will open Initial Setup so you can
+create the first Admin account.
+
+NOTE:
+This version is excellent for testing. SQLite storage on cloud hosting is not the
+final persistence design. PostgreSQL should be connected before production use.
