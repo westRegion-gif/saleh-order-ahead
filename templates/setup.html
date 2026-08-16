@@ -12,10 +12,14 @@
 <div id="err" class="autherror"></div>
 <div class="field"><label>Admin username</label><input id="username" autocomplete="username" autofocus></div>
 <div class="field"><label>Password</label><input id="password" type="password" autocomplete="new-password" placeholder="Minimum 10 characters"></div>
-<div class="field"><label>Confirm password</label><input id="confirm" type="password" autocomplete="new-password"></div>
+<div class="field"><label>Confirm password</label><input id="confirmPassword" type="password" autocomplete="new-password"></div>
 <button class="primary" onclick="setup()">Create Admin & Continue</button>
 </div></div>
 <script>
-async function setup(){err.style.display='none';if(password.value!==confirm.value){err.style.display='block';err.textContent='Passwords do not match';return}let r=await fetch('/api/auth/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.value,password:password.value})});let d=await r.json();if(!r.ok){err.style.display='block';err.textContent=d.detail||'Setup failed';return}location.href=d.redirect}
-confirm.addEventListener('keydown',e=>{if(e.key==='Enter')setup()});
+const usernameEl=document.getElementById('username');
+const passwordEl=document.getElementById('password');
+const confirmPasswordEl=document.getElementById('confirmPassword');
+const errEl=document.getElementById('err');
+async function setup(){errEl.style.display='none';if(passwordEl.value!==confirmPasswordEl.value){errEl.style.display='block';errEl.textContent='Passwords do not match';return}let r=await fetch('/api/auth/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:usernameEl.value,password:passwordEl.value})});let d=await r.json();if(!r.ok){errEl.style.display='block';errEl.textContent=d.detail||'Setup failed';return}location.href=d.redirect}
+confirmPasswordEl.addEventListener('keydown',e=>{if(e.key==='Enter')setup()});
 </script></body></html>
