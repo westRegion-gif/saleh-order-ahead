@@ -1,35 +1,75 @@
-# Saleh Order Ahead MVP
+# Saleh Order Ahead V4 — Ready-to-Test Build
 
-A unified working MVP for:
-- Customer pre-order and checkout
-- Branch live order screen with sound, print receipt, Preparing/Ready/Collected flow
-- Management dashboard across all branches
-- Central inventory with demo automatic consumption when a branch accepts an order
-- SQLite persistence
-- WebSocket live updates between customer, branch, and management screens
+Unified FastAPI MVP for customer ordering, branch live operations, management, inventory, and reporting.
 
-## Run
+## V4 scope implemented
+
+### Customer
+- Original supplied product images (22 products)
+- Original supplied astronaut/falcon artwork used unchanged as the app hero background
+- Branch selection + favorite branch
+- Live ETA based on branch queue/capacity
+- Branch-specific product availability
+- Walk-in / Drive pickup
+- ASAP / scheduled pickup choices
+- Favorites, recent orders, quick reorder (browser local storage)
+- Guest checkout and mock Apple Pay/Card adapter
+- Live order tracking
+
+### Branch live orders
+- New → Preparing → Ready → Collected
+- Live WebSocket notifications + sound
+- Optional browser auto-print attempt + manual reprint
+- Live order timer
+- Internal Bar / Kitchen station split
+- Order is marked Ready only after all required stations are complete
+- Kitchen tab hidden for branches without kitchen
+- Pause/resume new orders
+- Completed-order history
+
+### Management
+- Today dashboard
+- Inventory Overall / By Branch
+- Top Products Overall / By Branch
+- Low stock alerts
+- Branch comparison
+- Product availability per branch
+- Branch configuration (Kitchen, pause, prep time, capacity)
+- Weekly / Monthly reports, Overall / By Branch
+- Printable report (browser Save as PDF) + CSV download
+- Daily closing summary
+- Waste / expired / damaged / staff use / count / transfer adjustment log
+- Peak hours
+- Simple sales forecast
+
+## Run locally
 
 ```bash
-pip install -r requirements.txt
-uvicorn app:app --reload --host 0.0.0.0 --port 8000
+python -m pip install -r requirements.txt
+python -m uvicorn app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Open:
 - Customer: http://localhost:8000/
 - Management: http://localhost:8000/admin
-- Branch example: http://localhost:8000/branch/1
+- Branch 1: http://localhost:8000/branch/1
 
-## Important production integrations still required
+## Railway
 
-1. **Live payment gateway**: replace the current mock-paid behavior in `POST /api/orders` with Network International, Stripe, Checkout.com, Adyen, or your selected UAE gateway. Never store card numbers in this app.
-2. **Thermal auto-print**: browser printing works for the MVP. Silent/automatic 80mm printing normally needs a supported POS printer integration or a small local print agent running inside each branch.
-3. **Authentication & permissions**: add staff login, branch-role scoping, manager/admin roles, password reset, and audit logs before public deployment.
-4. **Production database**: migrate SQLite to PostgreSQL for multi-branch production usage.
-5. **Hosting / domain / TLS**: deploy behind HTTPS, e.g. `your-domain.com`.
-6. **Inventory recipes**: the included inventory deduction is a simple demo. Production should use recipes/BOMs per product and size.
-7. **Notifications**: optionally add SMS/WhatsApp/push when the order becomes Ready.
+The included `railway.json` is ready for the same GitHub → Railway flow.
 
-## Suggested production stack
+> Important: V4 still uses SQLite for development/testing. Before real multi-branch production use, migrate persistence to PostgreSQL and connect a real payment gateway and printer agent/ESC-POS integration.
 
-FastAPI + PostgreSQL + Redis/WebSockets + managed payment gateway + local thermal print service.
+## Menu note
+
+This build includes the 22 products for which original product images were supplied. Two items visible on the current public menu (Avocado & Scrambled Egg and Scrambled Egg Sandwich) are intentionally not shown because their original images were not supplied; no placeholder images were invented.
+
+
+## V4 authentication
+- First deployment opens `/setup` until the first Admin account is created.
+- Passwords are PBKDF2-SHA256 hashed; no password is hardcoded in the public repository.
+- Roles:
+  - `admin`: all management features + user management.
+  - `manager`: all management and all branches, but cannot manage users.
+  - `branch`: restricted to one assigned branch screen.
+- Sessions use an HttpOnly, SameSite=Lax cookie and expire after 7 days.
+- Customer ordering remains guest-friendly and does not require a login.
