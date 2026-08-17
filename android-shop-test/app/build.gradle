@@ -14,3 +14,5 @@ android {
         versionName '1.0-test'
     }
 }
+
+// Test APK: printing is disabled in MainActivity for this build.
