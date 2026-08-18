@@ -24,7 +24,7 @@ import java.lang.reflect.Method;
 public class MainActivity extends Activity {
     private static final String SHOP_URL = "https://saleh-order-ahead-production.up.railway.app/shop";
     private static final String APP_HOST = "saleh-order-ahead-production.up.railway.app";
-    private static final String TELPO_PRINTER_CLASS = "com.common.apiutil.printer.UsbThermalPrinter";
+    private static final String TELPO_PRINTER_CLASS = "com.telpo.tps550.api.printer.UsbThermalPrinter";
     private WebView webView;
 
     private static final String TELPO_NATIVE_JS =
@@ -47,7 +47,6 @@ public class MainActivity extends Activity {
         "var ap=document.getElementById('autoPrintBtn');if(ap){ap.textContent='Auto Print: On';}" +
         "var aps=document.getElementById('autoPrintState');if(aps){aps.textContent='AUTO PRINT ON';}" +
         "var sp=document.getElementById('settingsPrint');if(sp){sp.textContent='Auto Print ON';}" +
-        "var hint=document.querySelector('.machine-hint');if(hint){hint.textContent='TELPO M1: 3x incoming-order alert + automatic native 58mm printing enabled.';}" +
         "}catch(e){}})();";
 
     @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
@@ -56,7 +55,6 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         webView = new WebView(this);
         setContentView(webView);
-
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -65,12 +63,10 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setSupportMultipleWindows(false);
-        s.setUserAgentString(s.getUserAgentString() + " SalehTelpoM1/1.2");
-
+        s.setUserAgentString(s.getUserAgentString() + " SalehTelpoM1/1.3");
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(webView, true);
-
         webView.addJavascriptInterface(new AndroidTelpoBridge(), "AndroidTelpo");
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
@@ -82,7 +78,6 @@ public class MainActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) { return handle(r.getUrl()); }
             @Override public boolean shouldOverrideUrlLoading(WebView v, String url) { return handle(Uri.parse(url)); }
         });
-
         if (b == null) webView.loadUrl(SHOP_URL); else webView.restoreState(b);
     }
 
@@ -90,14 +85,9 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void printTestTicket() {
             printAsync("          SALEH SHOP\n================================\nTELPO M1 PRINTER TEST\nNative 58mm printer\nAuto Print: ON\nOrder alert: 3 times\n================================\nTEST OK\n\n\n");
         }
-
         @JavascriptInterface public void printOrder(String json) {
             try { printAsync(buildReceipt(new JSONObject(json))); }
             catch (Exception e) { showToast("Receipt error: " + e.getMessage()); }
-        }
-
-        @JavascriptInterface public String deviceProbe() {
-            return android.os.Build.MANUFACTURER + " | " + android.os.Build.MODEL + " | Android " + android.os.Build.VERSION.RELEASE;
         }
     }
 
@@ -112,7 +102,6 @@ public class MainActivity extends Activity {
         r.append("Pickup: ").append(o.optString("pickup_type", "Pickup")).append("\n");
         if (!o.optString("scheduled_for", "").isEmpty()) r.append("Time: ").append(o.optString("scheduled_for")).append("\n");
         r.append("--------------------------------\n");
-
         JSONArray items = o.optJSONArray("items");
         if (items != null) {
             for (int i = 0; i < items.length(); i++) {
@@ -129,16 +118,11 @@ public class MainActivity extends Activity {
                 }
             }
         }
-
         String note = o.optString("note", "");
-        if (!note.isEmpty()) {
-            r.append("--------------------------------\n");
-            r.append("NOTE: ").append(note).append("\n");
-        }
+        if (!note.isEmpty()) { r.append("--------------------------------\nNOTE: ").append(note).append("\n"); }
         r.append("================================\n");
         r.append("TOTAL: ").append(String.format(java.util.Locale.US, "%.2f", o.optDouble("total", 0))).append(" AED\n");
-        r.append("================================\n");
-        r.append("        PREPARE ORDER\n\n\n");
+        r.append("================================\n        PREPARE ORDER\n\n\n");
         return r.toString();
     }
 
@@ -149,51 +133,34 @@ public class MainActivity extends Activity {
                 Class<?> printerClass = Class.forName(TELPO_PRINTER_CLASS);
                 Constructor<?> ctor = printerClass.getConstructor(android.content.Context.class);
                 printer = ctor.newInstance(MainActivity.this);
-
                 invoke(printerClass, printer, "start", new Class[]{int.class}, new Object[]{0});
-                tryInvoke(printerClass, printer, "checkStatus", new Class[]{}, new Object[]{});
-                tryInvoke(printerClass, printer, "reset", new Class[]{}, new Object[]{});
-                tryInvoke(printerClass, printer, "setGray", new Class[]{int.class}, new Object[]{7});
+                invoke(printerClass, printer, "reset", new Class[]{}, new Object[]{});
+                tryInvoke(printerClass, printer, "setGray", new Class[]{int.class}, new Object[]{5});
                 tryInvoke(printerClass, printer, "setAlgin", new Class[]{int.class}, new Object[]{0});
                 tryInvoke(printerClass, printer, "setLeftIndent", new Class[]{int.class}, new Object[]{0});
                 tryInvoke(printerClass, printer, "setLineSpace", new Class[]{int.class}, new Object[]{0});
                 invoke(printerClass, printer, "addString", new Class[]{String.class}, new Object[]{text});
                 invoke(printerClass, printer, "printString", new Class[]{}, new Object[]{});
-                tryInvoke(printerClass, printer, "walkPaper", new Class[]{int.class}, new Object[]{100});
-                tryInvoke(printerClass, printer, "clearString", new Class[]{}, new Object[]{});
+                tryInvoke(printerClass, printer, "walkPaper", new Class[]{int.class}, new Object[]{3});
                 showToast("Printed");
             } catch (Throwable e) {
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
                 showToast("Telpo print error: " + cause.getClass().getSimpleName() + " - " + String.valueOf(cause.getMessage()));
             } finally {
-                if (printer != null) {
-                    try { tryInvoke(printer.getClass(), printer, "stop", new Class[]{}, new Object[]{}); }
-                    catch (Throwable ignored) {}
-                }
+                if (printer != null) try { tryInvoke(printer.getClass(), printer, "stop", new Class[]{}, new Object[]{}); } catch (Throwable ignored) {}
             }
         }).start();
     }
 
-    private Object invoke(Class<?> c, Object target, String name, Class<?>[] types, Object[] args) throws Exception {
-        Method m = c.getMethod(name, types);
-        return m.invoke(target, args);
-    }
-
-    private void tryInvoke(Class<?> c, Object target, String name, Class<?>[] types, Object[] args) {
-        try { c.getMethod(name, types).invoke(target, args); } catch (Throwable ignored) {}
-    }
-
-    private void showToast(final String text) {
-        runOnUiThread(() -> Toast.makeText(MainActivity.this, text, Toast.LENGTH_LONG).show());
-    }
-
+    private Object invoke(Class<?> c, Object target, String name, Class<?>[] types, Object[] args) throws Exception { return c.getMethod(name, types).invoke(target, args); }
+    private void tryInvoke(Class<?> c, Object target, String name, Class<?>[] types, Object[] args) { try { c.getMethod(name, types).invoke(target, args); } catch (Throwable ignored) {} }
+    private void showToast(final String text) { runOnUiThread(() -> Toast.makeText(MainActivity.this, text, Toast.LENGTH_LONG).show()); }
     private boolean handle(Uri u) {
         String scheme = u.getScheme(), host = u.getHost();
         if (("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)) && APP_HOST.equalsIgnoreCase(host)) return false;
         try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) {}
         return true;
     }
-
     @Override protected void onSaveInstanceState(Bundle out) { webView.saveState(out); super.onSaveInstanceState(out); }
     @Override public void onBackPressed() { if (webView != null && webView.canGoBack()) webView.goBack(); else super.onBackPressed(); }
     @Override protected void onDestroy() { if (webView != null) { webView.stopLoading(); webView.destroy(); } super.onDestroy(); }
