@@ -8,14 +8,8 @@ android {
         applicationId 'app.saleh.telpotest'
         minSdk 23
         targetSdk 34
-        versionCode 3
-        versionName '1.2-m1-native-print'
-    }
-
-    sourceSets {
-        main {
-            jniLibs.srcDirs = ['src/main/jniLibs']
-        }
+        versionCode 4
+        versionName '1.3-m1-printer'
     }
 }
 
