@@ -8,7 +8,11 @@ android {
         applicationId 'app.saleh.telpotest'
         minSdk 23
         targetSdk 34
-        versionCode 2
-        versionName '1.1-m1-native-print'
+        versionCode 3
+        versionName '1.2-m1-official-sdk-print'
     }
+}
+
+dependencies {
+    implementation files('libs/demoSDK_v2.28.20241212.aar')
 }
