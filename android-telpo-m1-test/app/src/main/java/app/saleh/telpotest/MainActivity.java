@@ -24,7 +24,7 @@ import java.lang.reflect.Method;
 public class MainActivity extends Activity {
     private static final String SHOP_URL = "https://saleh-order-ahead-production.up.railway.app/shop";
     private static final String APP_HOST = "saleh-order-ahead-production.up.railway.app";
-    private static final String TELPO_PRINTER_CLASS = "com.telpo.tps550.api.printer.UsbThermalPrinter";
+    private static final String TELPO_PRINTER_CLASS = "com.common.apiutil.printer.UsbThermalPrinter";
     private WebView webView;
 
     private static final String TELPO_NATIVE_JS =
@@ -44,6 +44,7 @@ public class MainActivity extends Activity {
         "window.testPrint=function(){if(window.AndroidTelpo){AndroidTelpo.printTestTicket();}};" +
         "var mode=document.getElementById('printerModePill');if(mode){mode.textContent='Printer: Telpo Native';}" +
         "var sm=document.getElementById('settingsPrinterMode');if(sm){sm.textContent='Telpo M1 58mm Native';}" +
+        "var bridge=document.getElementById('nativeBridgeLabel');if(bridge){bridge.textContent='Native Telpo bridge';}" +
         "var ap=document.getElementById('autoPrintBtn');if(ap){ap.textContent='Auto Print: On';}" +
         "var aps=document.getElementById('autoPrintState');if(aps){aps.textContent='AUTO PRINT ON';}" +
         "var sp=document.getElementById('settingsPrint');if(sp){sp.textContent='Auto Print ON';}" +
@@ -63,7 +64,7 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setSupportMultipleWindows(false);
-        s.setUserAgentString(s.getUserAgentString() + " SalehTelpoM1/1.3");
+        s.setUserAgentString(s.getUserAgentString() + " SalehTelpoM1/1.4");
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(webView, true);
@@ -83,7 +84,7 @@ public class MainActivity extends Activity {
 
     public class AndroidTelpoBridge {
         @JavascriptInterface public void printTestTicket() {
-            printAsync("          SALEH SHOP\n================================\nTELPO M1 PRINTER TEST\nNative 58mm printer\nAuto Print: ON\nOrder alert: 3 times\n================================\nTEST OK\n\n\n");
+            printAsync("          SALEH SHOP\n================================\nTELPO M1 PRINTER TEST\nOfficial Telpo SDK v2.28\nAuto Print: ON\nOrder alert: 3 times\n================================\nTEST OK\n\n\n");
         }
         @JavascriptInterface public void printOrder(String json) {
             try { printAsync(buildReceipt(new JSONObject(json))); }
@@ -134,6 +135,7 @@ public class MainActivity extends Activity {
                 Constructor<?> ctor = printerClass.getConstructor(android.content.Context.class);
                 printer = ctor.newInstance(MainActivity.this);
                 invoke(printerClass, printer, "start", new Class[]{int.class}, new Object[]{0});
+                tryInvoke(printerClass, printer, "checkStatus", new Class[]{}, new Object[]{});
                 invoke(printerClass, printer, "reset", new Class[]{}, new Object[]{});
                 tryInvoke(printerClass, printer, "setGray", new Class[]{int.class}, new Object[]{5});
                 tryInvoke(printerClass, printer, "setAlgin", new Class[]{int.class}, new Object[]{0});
