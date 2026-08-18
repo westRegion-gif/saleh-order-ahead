@@ -8,11 +8,11 @@ android {
         applicationId 'app.saleh.telpotest'
         minSdk 23
         targetSdk 34
-        versionCode 4
-        versionName '1.3-m1-printer'
+        versionCode 5
+        versionName '1.4-m1-official-aar'
     }
 }
 
 dependencies {
-    implementation files('libs/telpo_api.jar')
+    implementation files('libs/demoSDK_v2.28.20241212.aar')
 }
