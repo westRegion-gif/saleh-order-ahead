@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -25,40 +25,36 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
 
-      # The Telpo support download page is session/dynamic and was breaking CI.
-      # Use the public Telpo M1 integration library + native libs used by an M1-tested implementation.
-      - name: Prepare Telpo M1 printer library
+      - name: Prepare Telpo printer library
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf /tmp/telpo-flutter-sdk
-          git clone --depth 1 https://github.com/aljanshere/telpo-flutter-sdk.git /tmp/telpo-flutter-sdk
           mkdir -p android-telpo-m1-test/app/libs
-          mkdir -p android-telpo-m1-test/app/src/main/jniLibs
-          cp /tmp/telpo-flutter-sdk/android/src/libs/telpo_api.jar android-telpo-m1-test/app/libs/telpo_api.jar
-          cp -R /tmp/telpo-flutter-sdk/android/src/main/jniLibs/. android-telpo-m1-test/app/src/main/jniLibs/
+          curl -fL --retry 3 \
+            'https://raw.githubusercontent.com/aljanshere/telpo-flutter-sdk/master/android/src/libs/telpo_api.jar' \
+            -o android-telpo-m1-test/app/libs/telpo_api.jar
           test -s android-telpo-m1-test/app/libs/telpo_api.jar
 
       - name: Build APK
         working-directory: android-telpo-m1-test
-        run: gradle :app:assembleDebug --no-daemon
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Prepare artifact
         run: |
           mkdir -p dist
-          cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-v1.2.apk
+          cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-v1.3.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Saleh-Telpo-M1-v1.2
-          path: dist/Saleh-Telpo-M1-v1.2.apk
+          name: Saleh-Telpo-M1-v1.3
+          path: dist/Saleh-Telpo-M1-v1.3.apk
 
       - name: Publish APK to repository
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f dist/Saleh-Telpo-M1-v1.2.apk
+          git add -f dist/Saleh-Telpo-M1-v1.3.apk
           if ! git diff --cached --quiet; then
-            git commit -m 'Build Saleh Telpo M1 v1.2 APK [skip ci]'
+            git commit -m 'Build Saleh Telpo M1 v1.3 APK [skip ci]'
             git push
           fi
