@@ -35,21 +35,51 @@ jobs:
             -o android-telpo-m1-test/app/libs/telpo_api.jar
           test -s android-telpo-m1-test/app/libs/telpo_api.jar
 
-      - name: Build APK
+      - name: Build APK and capture log
+        id: gradle_build
+        shell: bash
         working-directory: android-telpo-m1-test
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          set +e
+          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee ../telpo-build.log
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Publish diagnostic log
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp telpo-build.log dist/telpo-build-v1.3.log || true
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f dist/telpo-build-v1.3.log
+          if ! git diff --cached --quiet; then
+            git commit -m 'Publish Telpo v1.3 build log [skip ci]'
+            git push
+          fi
+
+      - name: Stop on build failure
+        if: steps.gradle_build.outputs.status != '0'
+        run: |
+          echo "Gradle build failed with status ${{ steps.gradle_build.outputs.status }}"
+          exit 1
 
       - name: Prepare artifact
+        if: steps.gradle_build.outputs.status == '0'
         run: |
           mkdir -p dist
           cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-v1.3.apk
 
       - uses: actions/upload-artifact@v4
+        if: steps.gradle_build.outputs.status == '0'
         with:
           name: Saleh-Telpo-M1-v1.3
           path: dist/Saleh-Telpo-M1-v1.3.apk
 
       - name: Publish APK to repository
+        if: steps.gradle_build.outputs.status == '0'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
