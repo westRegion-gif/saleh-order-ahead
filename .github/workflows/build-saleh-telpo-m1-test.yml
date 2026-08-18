@@ -25,15 +25,15 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
 
-      - name: Prepare Telpo printer library
+      - name: Prepare official Telpo SDK v2.28
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p android-telpo-m1-test/app/libs
           curl -fL --retry 3 \
-            'https://raw.githubusercontent.com/aljanshere/telpo-flutter-sdk/master/android/src/libs/telpo_api.jar' \
-            -o android-telpo-m1-test/app/libs/telpo_api.jar
-          test -s android-telpo-m1-test/app/libs/telpo_api.jar
+            'https://raw.githubusercontent.com/wiratsil/tapgo_terminal_plugin/main/android/libs/demoSDK_v2.28.20241212.aar' \
+            -o android-telpo-m1-test/app/libs/demoSDK_v2.28.20241212.aar
+          test -s android-telpo-m1-test/app/libs/demoSDK_v2.28.20241212.aar
 
       - name: Build APK and capture log
         id: gradle_build
@@ -51,12 +51,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp telpo-build.log dist/telpo-build-v1.3.log || true
+          cp telpo-build.log dist/telpo-build-v1.4.log || true
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f dist/telpo-build-v1.3.log
+          git add -f dist/telpo-build-v1.4.log
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish Telpo v1.3 build log [skip ci]'
+            git commit -m 'Publish Telpo v1.4 build log [skip ci]'
+            git pull --rebase origin main
             git push
           fi
 
@@ -70,21 +71,22 @@ jobs:
         if: steps.gradle_build.outputs.status == '0'
         run: |
           mkdir -p dist
-          cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-v1.3.apk
+          cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-v1.4.apk
 
       - uses: actions/upload-artifact@v4
         if: steps.gradle_build.outputs.status == '0'
         with:
-          name: Saleh-Telpo-M1-v1.3
-          path: dist/Saleh-Telpo-M1-v1.3.apk
+          name: Saleh-Telpo-M1-v1.4
+          path: dist/Saleh-Telpo-M1-v1.4.apk
 
       - name: Publish APK to repository
         if: steps.gradle_build.outputs.status == '0'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f dist/Saleh-Telpo-M1-v1.3.apk
+          git add -f dist/Saleh-Telpo-M1-v1.4.apk
           if ! git diff --cached --quiet; then
-            git commit -m 'Build Saleh Telpo M1 v1.3 APK [skip ci]'
+            git commit -m 'Build Saleh Telpo M1 v1.4 APK [skip ci]'
+            git pull --rebase origin main
             git push
           fi
