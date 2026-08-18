@@ -7,6 +7,9 @@ on:
       - '.github/workflows/build-saleh-telpo-m1-test.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -27,8 +30,17 @@ jobs:
       - name: Prepare artifact
         run: |
           mkdir -p dist
-          cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-Test-v1.apk
+          cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-v1.1.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: Saleh-Telpo-M1-Test-v1
-          path: dist/Saleh-Telpo-M1-Test-v1.apk
+          name: Saleh-Telpo-M1-v1.1
+          path: dist/Saleh-Telpo-M1-v1.1.apk
+      - name: Publish APK to repository
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f dist/Saleh-Telpo-M1-v1.1.apk
+          if ! git diff --cached --quiet; then
+            git commit -m 'Build Saleh Telpo M1 v1.1 APK [skip ci]'
+            git push
+          fi
