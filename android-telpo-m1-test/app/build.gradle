@@ -9,10 +9,16 @@ android {
         minSdk 23
         targetSdk 34
         versionCode 3
-        versionName '1.2-m1-official-sdk-print'
+        versionName '1.2-m1-native-print'
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
     }
 }
 
 dependencies {
-    implementation files('libs/demoSDK_v2.28.20241212.aar')
+    implementation files('libs/telpo_api.jar')
 }
