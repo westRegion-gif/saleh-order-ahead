@@ -25,36 +25,19 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
 
-      - name: Download official Telpo SDK
+      # The Telpo support download page is session/dynamic and was breaking CI.
+      # Use the public Telpo M1 integration library + native libs used by an M1-tested implementation.
+      - name: Prepare Telpo M1 printer library
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p android-telpo-m1-test/app/libs /tmp/telpo
-          PAGE='https://service.telpo.com/index/user/getsdk?encode=eyJzbiI6IkE0QlMwMDYwMDAyMDAwMTUiLCJjb3VudHJ5IjoiMTY0In0%3D'
-          curl -fL --retry 3 -A 'Mozilla/5.0' "$PAGE" -o /tmp/telpo/page.html
-          python3 - <<'PY'
-          import re, html, urllib.parse
-          text=open('/tmp/telpo/page.html',encoding='utf-8',errors='ignore').read()
-          text=html.unescape(text)
-          patterns=[
-              r'href=["\']([^"\']*DemoSDK20241212_V2\.28\.zip[^"\']*)["\']',
-              r'["\']([^"\']*DemoSDK20241212_V2\.28\.zip[^"\']*)["\']',
-          ]
-          url=None
-          for p in patterns:
-              m=re.search(p,text,re.I)
-              if m:
-                  url=m.group(1); break
-          if not url:
-              raise SystemExit('Could not find Telpo DemoSDK download URL in support page')
-          url=urllib.parse.urljoin('https://service.telpo.com/',url)
-          open('/tmp/telpo/url.txt','w').write(url)
-          print('SDK URL:',url)
-          PY
-          SDK_URL="$(cat /tmp/telpo/url.txt)"
-          curl -fL --retry 3 -A 'Mozilla/5.0' "$SDK_URL" -o /tmp/telpo/sdk.zip
-          unzip -j /tmp/telpo/sdk.zip 'aar/demoSDK_v2.28.20241212.aar' -d android-telpo-m1-test/app/libs
-          test -s android-telpo-m1-test/app/libs/demoSDK_v2.28.20241212.aar
+          rm -rf /tmp/telpo-flutter-sdk
+          git clone --depth 1 https://github.com/aljanshere/telpo-flutter-sdk.git /tmp/telpo-flutter-sdk
+          mkdir -p android-telpo-m1-test/app/libs
+          mkdir -p android-telpo-m1-test/app/src/main/jniLibs
+          cp /tmp/telpo-flutter-sdk/android/src/libs/telpo_api.jar android-telpo-m1-test/app/libs/telpo_api.jar
+          cp -R /tmp/telpo-flutter-sdk/android/src/main/jniLibs/. android-telpo-m1-test/app/src/main/jniLibs/
+          test -s android-telpo-m1-test/app/libs/telpo_api.jar
 
       - name: Build APK
         working-directory: android-telpo-m1-test
