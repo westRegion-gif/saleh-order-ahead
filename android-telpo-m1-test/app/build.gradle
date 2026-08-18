@@ -8,7 +8,7 @@ android {
         applicationId 'app.saleh.telpotest'
         minSdk 23
         targetSdk 34
-        versionCode 1
-        versionName '1.0-m1-test'
+        versionCode 2
+        versionName '1.1-m1-native-print'
     }
 }
