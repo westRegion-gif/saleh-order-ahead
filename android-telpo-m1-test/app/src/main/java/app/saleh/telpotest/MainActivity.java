@@ -20,6 +20,7 @@ import org.json.JSONObject;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final String SHOP_URL = "https://saleh-order-ahead-production.up.railway.app/shop";
@@ -64,7 +65,7 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setSupportMultipleWindows(false);
-        s.setUserAgentString(s.getUserAgentString() + " SalehTelpoM1/1.4");
+        s.setUserAgentString(s.getUserAgentString() + " SalehTelpoM1/1.5");
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(webView, true);
@@ -84,7 +85,7 @@ public class MainActivity extends Activity {
 
     public class AndroidTelpoBridge {
         @JavascriptInterface public void printTestTicket() {
-            printAsync("          SALEH SHOP\n================================\nTELPO M1 PRINTER TEST\nOfficial Telpo SDK v2.28\nAuto Print: ON\nOrder alert: 3 times\n================================\nTEST OK\n\n\n");
+            printAsync("          SALEH SHOP\n================================\nTELPO M1 PRINTER TEST\nOfficial Telpo SDK v2.28\nReceipt layout: v1.5\nAuto Print: ON\nOrder alert: 3 times\n================================\nTEST OK\n\n\n");
         }
         @JavascriptInterface public void printOrder(String json) {
             try { printAsync(buildReceipt(new JSONObject(json))); }
@@ -94,37 +95,127 @@ public class MainActivity extends Activity {
 
     private String buildReceipt(JSONObject o) {
         StringBuilder r = new StringBuilder();
-        String orderNo = o.optString("order_no", String.valueOf(o.optInt("id")));
-        r.append("          SALEH SHOP\n");
+        String orderNo = clean(firstNonEmpty(o, "order_no", "id"));
+        String branchName = clean(firstNonEmpty(o, "branch_name", "branch"));
+        String customerName = clean(firstNonEmpty(o, "customer_name", "name"));
+        String mobile = clean(firstNonEmpty(o, "mobile", "phone"));
+        String pickup = clean(firstNonEmpty(o, "pickup_type", "pickup"));
+        String scheduled = clean(firstNonEmpty(o, "scheduled_for", "pickup_time"));
+
+        r.append("          SALEH\n");
+        if (valid(branchName)) r.append(center(branchName)).append("\n");
         r.append("================================\n");
-        r.append("ORDER #").append(orderNo).append("\n");
-        r.append("Customer: ").append(o.optString("customer_name", "-")).append("\n");
-        if (!o.optString("mobile", "").isEmpty()) r.append("Mobile: ").append(o.optString("mobile")).append("\n");
-        r.append("Pickup: ").append(o.optString("pickup_type", "Pickup")).append("\n");
-        if (!o.optString("scheduled_for", "").isEmpty()) r.append("Time: ").append(o.optString("scheduled_for")).append("\n");
+        r.append("ORDER #").append(valid(orderNo) ? orderNo : "-").append("\n");
+        if (valid(customerName)) r.append("Customer: ").append(customerName).append("\n");
+        if (valid(mobile)) r.append("Mobile: ").append(mobile).append("\n");
+        r.append("Pickup: ").append(valid(pickup) ? pickup : "Pickup").append("\n");
+        if (valid(scheduled) && !scheduled.toLowerCase(Locale.US).startsWith("asap")) {
+            r.append("Time: ").append(scheduled).append("\n");
+        }
+
+        String carLine = buildCarLine(o);
+        if (valid(carLine) && pickup.toLowerCase(Locale.US).contains("drive")) {
+            r.append("Car: ").append(carLine).append("\n");
+        }
+
         r.append("--------------------------------\n");
         JSONArray items = o.optJSONArray("items");
         if (items != null) {
             for (int i = 0; i < items.length(); i++) {
                 JSONObject item = items.optJSONObject(i);
                 if (item == null) continue;
-                r.append(item.optInt("qty", 1)).append(" x ").append(item.optString("product_name", "Item")).append("\n");
-                String size = item.optString("size", "");
-                String milk = item.optString("milk", "");
-                if (!size.isEmpty() || (!milk.isEmpty() && !"N/A".equalsIgnoreCase(milk))) {
-                    r.append("   ");
-                    if (!size.isEmpty()) r.append(size);
-                    if (!milk.isEmpty() && !"N/A".equalsIgnoreCase(milk)) r.append(size.isEmpty() ? "" : " / ").append(milk);
-                    r.append("\n");
-                }
+                int qty = item.optInt("qty", 1);
+                String product = clean(firstNonEmpty(item, "product_name", "name"));
+                r.append(qty).append(" x ").append(valid(product) ? product : "Item").append("\n");
+
+                appendOption(r, firstNonEmpty(item, "serve", "temperature"));
+                appendOption(r, firstNonEmpty(item, "size"));
+                appendOption(r, firstNonEmpty(item, "milk"));
+                appendOption(r, firstNonEmpty(item, "sweetness"));
+                appendOption(r, firstNonEmpty(item, "beans", "coffee_beans"));
+
+                String itemNote = clean(firstNonEmpty(item, "item_note", "note"));
+                if (valid(itemNote)) r.append("   Note: ").append(itemNote).append("\n");
+                if (i < items.length() - 1) r.append("\n");
             }
         }
-        String note = o.optString("note", "");
-        if (!note.isEmpty()) { r.append("--------------------------------\nNOTE: ").append(note).append("\n"); }
+
+        String note = clean(firstNonEmpty(o, "customer_note", "note"));
+        if (valid(note)) {
+            r.append("--------------------------------\n");
+            r.append("NOTE: ").append(note).append("\n");
+        }
+
         r.append("================================\n");
-        r.append("TOTAL: ").append(String.format(java.util.Locale.US, "%.2f", o.optDouble("total", 0))).append(" AED\n");
-        r.append("================================\n        PREPARE ORDER\n\n\n");
+        double subtotal = o.optDouble("subtotal", Double.NaN);
+        if (!Double.isNaN(subtotal)) {
+            r.append("Subtotal: ").append(String.format(Locale.US, "%.2f", subtotal)).append(" AED\n");
+        }
+        r.append("TOTAL: ").append(String.format(Locale.US, "%.2f", o.optDouble("total", 0))).append(" AED\n");
+        r.append("================================\n");
+        r.append("        PREPARE ORDER\n\n\n");
         return r.toString();
+    }
+
+    private String buildCarLine(JSONObject o) {
+        JSONObject car = o.optJSONObject("car");
+        String brand = clean(firstNonEmpty(o, "car_brand", "vehicle_brand"));
+        String emirate = clean(firstNonEmpty(o, "car_emirate", "plate_emirate", "car_city"));
+        String category = clean(firstNonEmpty(o, "car_category", "plate_category"));
+        String plate = clean(firstNonEmpty(o, "car_plate", "plate_number", "vehicle_plate"));
+        if (car != null) {
+            if (!valid(brand)) brand = clean(firstNonEmpty(car, "brand", "vehicle_brand"));
+            if (!valid(emirate)) emirate = clean(firstNonEmpty(car, "emirate", "city", "plate_emirate"));
+            if (!valid(category)) category = clean(firstNonEmpty(car, "category", "plate_category"));
+            if (!valid(plate)) plate = clean(firstNonEmpty(car, "plate", "plate_number"));
+        }
+        StringBuilder c = new StringBuilder();
+        if (valid(brand)) c.append(brand);
+        if (valid(emirate)) appendCarPart(c, emirate);
+        if (valid(category)) appendCarPart(c, category);
+        if (valid(plate)) appendCarPart(c, plate);
+        return c.toString();
+    }
+
+    private void appendCarPart(StringBuilder c, String value) {
+        if (c.length() > 0) c.append(" | ");
+        c.append(value);
+    }
+
+    private void appendOption(StringBuilder r, String raw) {
+        String value = clean(raw);
+        if (valid(value) && !"regular".equalsIgnoreCase(value) && !"n/a".equalsIgnoreCase(value)) {
+            r.append("   ").append(value).append("\n");
+        }
+    }
+
+    private String firstNonEmpty(JSONObject o, String... keys) {
+        for (String key : keys) {
+            if (!o.has(key) || o.isNull(key)) continue;
+            String v = String.valueOf(o.opt(key));
+            if (valid(v)) return v;
+        }
+        return "";
+    }
+
+    private String clean(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private boolean valid(String value) {
+        if (value == null) return false;
+        String v = value.trim();
+        return !v.isEmpty() && !"null".equalsIgnoreCase(v) && !"undefined".equalsIgnoreCase(v) && !"n/a".equalsIgnoreCase(v) && !"none".equalsIgnoreCase(v);
+    }
+
+    private String center(String value) {
+        String v = value == null ? "" : value.trim();
+        if (v.length() >= 32) return v.substring(0, 32);
+        int pad = Math.max(0, (32 - v.length()) / 2);
+        StringBuilder s = new StringBuilder();
+        for (int i = 0; i < pad; i++) s.append(' ');
+        s.append(v);
+        return s.toString();
     }
 
     private void printAsync(final String text) {
