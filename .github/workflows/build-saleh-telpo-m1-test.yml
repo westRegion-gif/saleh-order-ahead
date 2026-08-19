@@ -51,12 +51,12 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp telpo-build.log dist/telpo-build-v1.4.log || true
+          cp telpo-build.log dist/telpo-build-v1.5.log || true
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f dist/telpo-build-v1.4.log
+          git add -f dist/telpo-build-v1.5.log
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish Telpo v1.4 build log [skip ci]'
+            git commit -m 'Publish Telpo v1.5 build log [skip ci]'
             git pull --rebase origin main
             git push
           fi
@@ -71,22 +71,22 @@ jobs:
         if: steps.gradle_build.outputs.status == '0'
         run: |
           mkdir -p dist
-          cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-v1.4.apk
+          cp android-telpo-m1-test/app/build/outputs/apk/debug/app-debug.apk dist/Saleh-Telpo-M1-v1.5.apk
 
       - uses: actions/upload-artifact@v4
         if: steps.gradle_build.outputs.status == '0'
         with:
-          name: Saleh-Telpo-M1-v1.4
-          path: dist/Saleh-Telpo-M1-v1.4.apk
+          name: Saleh-Telpo-M1-v1.5
+          path: dist/Saleh-Telpo-M1-v1.5.apk
 
       - name: Publish APK to repository
         if: steps.gradle_build.outputs.status == '0'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f dist/Saleh-Telpo-M1-v1.4.apk
+          git add -f dist/Saleh-Telpo-M1-v1.5.apk
           if ! git diff --cached --quiet; then
-            git commit -m 'Build Saleh Telpo M1 v1.4 APK [skip ci]'
+            git commit -m 'Build Saleh Telpo M1 v1.5 APK [skip ci]'
             git pull --rebase origin main
             git push
           fi
