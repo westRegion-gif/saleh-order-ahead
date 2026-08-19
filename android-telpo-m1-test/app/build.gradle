@@ -8,8 +8,8 @@ android {
         applicationId 'app.saleh.telpotest'
         minSdk 23
         targetSdk 34
-        versionCode 5
-        versionName '1.4-m1-official-aar'
+        versionCode 6
+        versionName '1.5-m1-receipt-layout'
     }
 }
 
