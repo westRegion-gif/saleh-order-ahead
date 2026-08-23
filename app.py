@@ -70,9 +70,6 @@ ORDER_STATUSES = {
 }
 ACTIVE_STATUSES = ("awaiting_acceptance", "pending", "preparing")
 PENDING_ESCALATION_SECONDS = 90
-# Orders placed without a connected live payment gateway are flagged as test
-# orders so they never inflate real paid-sales reporting.
-TEST_PAYMENT_METHODS = {"Test Payment"}
 
 # Manually settable transitions via /api/orders/{id}/status. 'pending' is
 # reached only through the server-side 90-second escalation task, never
@@ -525,19 +522,6 @@ class OrderItemIn(BaseModel):
     item_note: str = ""
 
 
-class OrderIn(BaseModel):
-    branch_id: int
-    customer_name: str = "Guest"
-    mobile: str = ""
-    car_id: Optional[int] = None
-    pickup_type: str = "Walk-in"
-    pickup_time: str = "ASAP"
-    scheduled_for: Optional[str] = None
-    payment_method: str = "Card"
-    customer_note: str = ""
-    items: list[OrderItemIn]
-
-
 class CheckoutDraftIn(BaseModel):
     branch_id: int
     customer_name: str = "Guest"
@@ -617,6 +601,17 @@ def serialize_order(conn, row):
         d["car"] = dict(car) if car else None
     else:
         d["car"] = None
+    return d
+
+
+def public_order_view(order: dict) -> dict:
+    """Order data returned to an unauthenticated, customer-facing caller
+    (order tracking, checkout confirmation) — strips the internal Stripe
+    PaymentIntent id, which has no legitimate customer-facing use and is
+    the kind of gateway identifier that shouldn't ride along on a public,
+    order-number-keyed lookup."""
+    d = dict(order)
+    d.pop("stripe_payment_intent_id", None)
     return d
 
 
@@ -1346,7 +1341,7 @@ def order_by_no(order_no: str):
     if not row:
         conn.close()
         raise HTTPException(404, "Order not found")
-    result = serialize_order(conn, row)
+    result = public_order_view(serialize_order(conn, row))
     conn.close()
     return result
 
@@ -1487,7 +1482,7 @@ async def confirm_checkout(payload: CheckoutConfirmIn):
                 (draft["order_id"],),
             ).fetchone()
             if row:
-                return serialize_order(conn, row)
+                return public_order_view(serialize_order(conn, row))
         if not draft["stripe_payment_intent_id"]:
             raise HTTPException(400, "Payment has not been started for this checkout session")
         pi_id = draft["stripe_payment_intent_id"]
@@ -1508,7 +1503,7 @@ async def confirm_checkout(payload: CheckoutConfirmIn):
         await manager.broadcast(
             {"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}}
         )
-        return order
+        return public_order_view(order)
     if status in ("requires_payment_method", "canceled"):
         raise HTTPException(402, "Payment was not successful. Please try again.")
     raise HTTPException(409, "Payment is still processing. Please wait a moment and try again.")
@@ -1539,114 +1534,6 @@ async def stripe_webhook(request: Request):
             {"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}}
         )
     return {"received": True}
-
-
-@app.post("/api/orders")
-async def create_order(payload: OrderIn):
-    conn = db()
-    branch = conn.execute("SELECT * FROM branches WHERE id=? AND active=1", (payload.branch_id,)).fetchone()
-    if not branch:
-        conn.close()
-        raise HTTPException(400, "Invalid branch")
-    if branch["paused"]:
-        conn.close()
-        raise HTTPException(409, "This branch has temporarily paused new orders")
-    if payload.pickup_type == "Drive" and not branch["drive_enabled"]:
-        conn.close()
-        raise HTTPException(400, "Drive pickup is not available at this branch")
-    if payload.pickup_type == "Walk-in" and not branch["walkin_enabled"]:
-        conn.close()
-        raise HTTPException(400, "Walk-in pickup is not available at this branch")
-
-    car_id = None
-    if payload.pickup_type == "Drive":
-        if not payload.car_id:
-            conn.close()
-            raise HTTPException(400, "Select a saved car for Drive Pickup")
-        car = conn.execute(
-            "SELECT id FROM customer_cars WHERE id=? AND active=1", (payload.car_id,)
-        ).fetchone()
-        if not car:
-            conn.close()
-            raise HTTPException(400, "Selected car was not found. Save it again under My Cars.")
-        car_id = payload.car_id
-
-    total = 0.0
-    priced = []
-    for item in payload.items:
-        p = conn.execute(
-            """
-            SELECT p.*,bp.available,bp.price_override
-            FROM products p JOIN branch_products bp ON bp.product_id=p.id
-            WHERE p.id=? AND bp.branch_id=? AND p.active=1
-            """,
-            (item.product_id, payload.branch_id),
-        ).fetchone()
-        if not p or not p["available"]:
-            conn.close()
-            raise HTTPException(400, f"Product {item.product_id} is unavailable")
-        if p["station"] == "kitchen" and not branch["has_kitchen"]:
-            conn.close()
-            raise HTTPException(400, f"{p['name']} is not available at this branch")
-        unit = float(p["price_override"] if p["price_override"] is not None else p["price"])
-        if item.size.lower() == "large" and p["station"] == "bar":
-            unit += 4
-        if "oat" in item.milk.lower() and p["station"] == "bar":
-            unit += 3
-        total += unit * item.qty
-        priced.append((item, p, unit))
-
-    created = datetime.now().isoformat(timespec="seconds")
-    eta = branch_eta(conn, branch)
-    pickup_time = payload.pickup_time or f"ASAP · ~{eta} min"
-    is_test = 1 if payload.payment_method in TEST_PAYMENT_METHODS else 0
-    cur = conn.execute(
-        """
-        INSERT INTO orders(order_no,branch_id,customer_name,mobile,car_id,pickup_type,pickup_time,scheduled_for,
-            payment_method,payment_status,status,is_test,total,customer_note,created_at)
-        VALUES(NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            payload.branch_id,
-            payload.customer_name.strip() or "Guest",
-            payload.mobile,
-            car_id,
-            payload.pickup_type,
-            pickup_time,
-            payload.scheduled_for,
-            payload.payment_method,
-            "paid",
-            "awaiting_acceptance",
-            is_test,
-            round(total, 2),
-            payload.customer_note,
-            created,
-        ),
-    )
-    order_id = cur.lastrowid
-    order_no = f"SALEH-{1000 + order_id}"
-    conn.execute("UPDATE orders SET order_no=? WHERE id=?", (order_no, order_id))
-    for item, p, unit in priced:
-        conn.execute(
-            """
-            INSERT INTO order_items(order_id,product_id,product_name,qty,unit_price,serve,size,milk,sweetness,beans,item_note,station,station_status)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                order_id, p["id"], p["name"], item.qty, unit,
-                item.serve, item.size, item.milk, item.sweetness, item.beans, item.item_note,
-                p["station"], "pending",
-            ),
-        )
-    conn.commit()
-    row = conn.execute(
-        "SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.id=?",
-        (order_id,),
-    ).fetchone()
-    order = serialize_order(conn, row)
-    conn.close()
-    await manager.broadcast({"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}})
-    return order
 
 
 @app.get("/api/orders")

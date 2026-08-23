@@ -134,8 +134,13 @@ def test_customizations_survive_to_the_materialized_order(client, gateway):
     assert item["milk"] == "Oat Milk"
     assert item["sweetness"] == "Extra Sweet"
     assert item["item_note"] == "light ice"
-    assert order["stripe_payment_intent_id"] == pi_id
+    assert "stripe_payment_intent_id" not in order  # redacted from the customer-facing response
     assert order["is_test"] == 1  # Stripe TEST MODE order must never count as real revenue.
+
+    conn = db_conn()
+    row = conn.execute("SELECT stripe_payment_intent_id FROM orders WHERE id=?", (order["id"],)).fetchone()
+    conn.close()
+    assert row["stripe_payment_intent_id"] == pi_id  # still recorded server-side
 
 
 # ---------------------------------------------------------------------
@@ -297,3 +302,36 @@ def test_intent_creation_retry_reuses_same_payment_intent(client, gateway):
     intent2 = _create_intent(client, draft["draft_token"])
     assert intent1["client_secret"] == intent2["client_secret"]
     assert len(gateway.intents) == 1
+
+
+# ---------------------------------------------------------------------
+# The legacy unpaid /api/orders endpoint must not exist anymore — it was
+# a full bypass of "create the real order only after verified successful
+# payment" (no payment step, and a weaker car-ownership check).
+# ---------------------------------------------------------------------
+
+def test_legacy_unpaid_orders_endpoint_is_gone(client):
+    r = client.post("/api/orders", json=_draft_payload())
+    assert r.status_code in (404, 405)
+    assert order_count() == 0
+
+
+# ---------------------------------------------------------------------
+# Internal payment-gateway identifiers must not leak to customer-facing
+# responses (order tracking, checkout confirmation).
+# ---------------------------------------------------------------------
+
+def test_stripe_payment_intent_id_not_exposed_to_customer(client, gateway):
+    draft = _create_draft(client)
+    intent = _create_intent(client, draft["draft_token"])
+    pi_id = next(iter(gateway.intents))
+    gateway.mark_succeeded(pi_id)
+
+    confirm_resp = client.post("/api/checkout/confirm", json={"draft_token": draft["draft_token"]})
+    assert confirm_resp.status_code == 200
+    order = confirm_resp.json()
+    assert "stripe_payment_intent_id" not in order
+
+    track_resp = client.get(f"/api/order/{order['order_no']}")
+    assert track_resp.status_code == 200
+    assert "stripe_payment_intent_id" not in track_resp.json()
