@@ -698,7 +698,7 @@ def _price_items_minor(conn, branch, items: list[OrderItemIn]):
     return total_minor, priced
 
 
-def materialize_order_from_paid_intent(payment_intent_id: str, stripe_intent=None) -> dict:
+def materialize_order_from_paid_intent(payment_intent_id: str, stripe_intent=None) -> tuple[dict, bool]:
     """Create the real order from a checkout draft, but only once, and only
     after independently confirming with Stripe that the payment succeeded
     for the exact amount and currency the draft was priced at.
@@ -714,6 +714,12 @@ def materialize_order_from_paid_intent(payment_intent_id: str, stripe_intent=Non
     is returned as-is rather than recreated. A UNIQUE index on
     orders.stripe_payment_intent_id is the final backstop against a race
     between two concurrent calls for the same intent.
+
+    Returns (order, is_new). Callers must only broadcast order_created when
+    is_new is True — the order-count guarantee is already database-level
+    idempotent, but without this flag, whichever of the webhook / sync
+    confirm calls this second would still send a duplicate order_created
+    notification to the Shop for an order it didn't actually just create.
     """
     conn = db()
     try:
@@ -722,7 +728,7 @@ def materialize_order_from_paid_intent(payment_intent_id: str, stripe_intent=Non
             (payment_intent_id,),
         ).fetchone()
         if existing:
-            return serialize_order(conn, existing)
+            return serialize_order(conn, existing), False
 
         draft = conn.execute(
             "SELECT * FROM checkout_drafts WHERE stripe_payment_intent_id=?",
@@ -835,13 +841,29 @@ def materialize_order_from_paid_intent(payment_intent_id: str, stripe_intent=Non
             ).fetchone()
             if not row:
                 raise
-            return serialize_order(conn, row)
+            return serialize_order(conn, row), False
 
         row = conn.execute(
             "SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.id=?",
             (order_id,),
         ).fetchone()
-        return serialize_order(conn, row)
+        return serialize_order(conn, row), True
+    finally:
+        conn.close()
+
+
+def _mark_draft_payment_state(payment_intent_id: str, status: str) -> None:
+    """Record a terminal non-success PaymentIntent status on its checkout
+    draft, for audit/cleanup only — this never touches orders. A draft that
+    already materialized an order is left alone (a success can't un-happen
+    just because a stale/duplicate failure event arrives after it)."""
+    conn = db()
+    try:
+        conn.execute(
+            "UPDATE checkout_drafts SET status=?,updated_at=? WHERE stripe_payment_intent_id=? AND status!='materialized'",
+            (status, datetime.now().isoformat(timespec="seconds"), payment_intent_id),
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -1497,15 +1519,20 @@ async def confirm_checkout(payload: CheckoutConfirmIn):
     status = intent["status"]
     if status == "succeeded":
         try:
-            order = materialize_order_from_paid_intent(pi_id, stripe_intent=intent)
+            order, is_new = materialize_order_from_paid_intent(pi_id, stripe_intent=intent)
         except payments.PaymentError as exc:
             raise HTTPException(409, str(exc))
-        await manager.broadcast(
-            {"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}}
-        )
+        if is_new:
+            await manager.broadcast(
+                {"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}}
+            )
         return public_order_view(order)
-    if status in ("requires_payment_method", "canceled"):
+    if status == "requires_payment_method":
+        _mark_draft_payment_state(pi_id, "payment_failed")
         raise HTTPException(402, "Payment was not successful. Please try again.")
+    if status == "canceled":
+        _mark_draft_payment_state(pi_id, "canceled")
+        raise HTTPException(402, "Payment was canceled.")
     raise HTTPException(409, "Payment is still processing. Please wait a moment and try again.")
 
 
@@ -1523,16 +1550,23 @@ async def stripe_webhook(request: Request):
     if event["type"] == "payment_intent.succeeded":
         intent = event["data"]["object"]
         try:
-            order = materialize_order_from_paid_intent(intent["id"], stripe_intent=intent)
+            order, is_new = materialize_order_from_paid_intent(intent["id"], stripe_intent=intent)
         except payments.PaymentError as exc:
             # A payment that cannot be reconciled with any draft, or whose
             # amount/currency doesn't match what we priced, is a data
             # integrity problem, not a transient failure — asking Stripe to
             # retry this exact payload would never succeed.
             return JSONResponse({"received": True, "error": str(exc)}, status_code=400)
-        await manager.broadcast(
-            {"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}}
-        )
+        if is_new:
+            await manager.broadcast(
+                {"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}}
+            )
+    elif event["type"] == "payment_intent.payment_failed":
+        # Never creates an order — only records the terminal state on the
+        # draft for audit/cleanup, same as the synchronous confirm path.
+        _mark_draft_payment_state(event["data"]["object"]["id"], "payment_failed")
+    elif event["type"] == "payment_intent.canceled":
+        _mark_draft_payment_state(event["data"]["object"]["id"], "canceled")
     return {"received": True}
 
 

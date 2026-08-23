@@ -14,15 +14,25 @@ customer checkout
    -> POST /api/checkout/confirm          (synchronous verification + order creation)
 
 Stripe also calls:
-   -> POST /api/stripe/webhook            (payment_intent.succeeded)
+   -> POST /api/stripe/webhook            (payment_intent.succeeded / .payment_failed / .canceled)
 ```
 
 Both `/api/checkout/confirm` and `/api/stripe/webhook` call the exact same
 `materialize_order_from_paid_intent()` function in `app.py`. Whichever request
-arrives first creates the real order; the other is a no-op idempotent return of
-the same order. A order is only ever created after the server independently
-re-verifies with Stripe that the PaymentIntent status is `succeeded` and that
-the amount/currency match what the checkout draft was priced at.
+arrives first creates the real order and returns `is_new=True`; the other gets
+`is_new=False` back for the same, already-created order. Callers only broadcast
+the `order_created` WebSocket event to the Shop when `is_new` is `True`, so a
+duplicate webhook delivery or the webhook and synchronous confirm racing each
+other can never send the Shop two notifications for one order. An order is
+only ever created after the server independently re-verifies with Stripe that
+the PaymentIntent status is `succeeded` and that the amount/currency match
+what the checkout draft was priced at.
+
+`payment_intent.payment_failed` and `payment_intent.canceled` never create an
+order — both are handled by `_mark_draft_payment_state()`, which only updates
+the matching `checkout_drafts.status` (`payment_failed` / `canceled`) for
+audit/cleanup. The synchronous confirm path applies the same status update
+when it independently observes those PaymentIntent states.
 
 ## Required Railway environment variables
 
@@ -45,10 +55,14 @@ https://YOUR-RAILWAY-DOMAIN/api/stripe/webhook
 
 ### Required events
 
-Subscribe the endpoint to:
+Subscribe the endpoint to all three of:
 
-- `payment_intent.succeeded` — the only event this deployment acts on; it triggers
-  `materialize_order_from_paid_intent()`.
+- `payment_intent.succeeded` — triggers `materialize_order_from_paid_intent()`;
+  creates the real order (only once — see idempotency note above).
+- `payment_intent.payment_failed` — records `checkout_drafts.status='payment_failed'`
+  for audit/cleanup. **Never creates an order.**
+- `payment_intent.canceled` — records `checkout_drafts.status='canceled'` for
+  audit/cleanup. **Never creates an order.**
 
 No other events are required. Extra events can be selected without issue — the
 handler acknowledges (`200 {"received": true}`) and ignores anything it doesn't

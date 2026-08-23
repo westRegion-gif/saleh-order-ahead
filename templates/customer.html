@@ -118,7 +118,7 @@ h.unshift({order_no:o.order_no,label:label,branch_id:o.branch_id,branch_name:o.b
 save('saleh_order_history',h.slice(0,20));
 closeOv('checkoutOv');resetCheckoutPaymentUI();
 $('orderNo').textContent='#'+o.order_no;
-$('successText').textContent=o.pickup_type==='Drive'?'We are preparing your order. Arrive in your selected vehicle and the team will identify you.':'We sent your order to the branch. Follow it live until it is ready.';
+$('successText').textContent=o.pickup_type==='Drive'?'Payment received. Your order has been sent to the branch and is waiting for acceptance. Once accepted, arrive in your selected vehicle and the team will identify you.':'Payment received. Your order has been sent to the branch and is waiting for acceptance. Follow it live until it is ready.';
 $('successBranch').textContent=o.branch_name;
 $('successPickup').textContent=`${o.pickup_type} · ${o.pickup_time}`;
 $('successCarRow').classList.toggle('hidden',o.pickup_type!=='Drive');

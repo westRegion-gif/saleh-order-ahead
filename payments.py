@@ -13,6 +13,7 @@ that gets charged — amounts are computed server-side by the caller.
 from __future__ import annotations
 
 import os
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
 
 import stripe
@@ -57,9 +58,17 @@ def webhook_configured() -> bool:
     return bool(STRIPE_WEBHOOK_SECRET)
 
 
-def to_minor_units(amount_major: float) -> int:
-    """Convert a decimal AED amount to integer fils, rounding to the nearest fil."""
-    return int(round(float(amount_major) * 100))
+def to_minor_units(amount_major) -> int:
+    """Convert an AED amount to integer fils using exact decimal arithmetic.
+
+    Stripe money math must never go through binary float (e.g. 2.675 * 100
+    == 267.49999999999994 in IEEE-754 float, which rounds down to the wrong
+    fil amount). Converting via Decimal(str(amount_major)) reads the value
+    the same way a human would, and quantization is exact from there.
+    """
+    exact = Decimal(str(amount_major))
+    minor = (exact * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return int(minor)
 
 
 def create_payment_intent(
