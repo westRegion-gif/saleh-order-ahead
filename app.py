@@ -20,6 +20,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from db import get_conn, ensure_column, IntegrityError as DBIntegrityError
+import payments
 
 BASE = Path(__file__).resolve().parent
 
@@ -69,9 +70,6 @@ ORDER_STATUSES = {
 }
 ACTIVE_STATUSES = ("awaiting_acceptance", "pending", "preparing")
 PENDING_ESCALATION_SECONDS = 90
-# Orders placed without a connected live payment gateway are flagged as test
-# orders so they never inflate real paid-sales reporting.
-TEST_PAYMENT_METHODS = {"Test Payment"}
 
 # Manually settable transitions via /api/orders/{id}/status. 'pending' is
 # reached only through the server-side 90-second escalation task, never
@@ -262,6 +260,29 @@ def init_db():
             created_at TEXT NOT NULL,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS checkout_drafts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            draft_token TEXT NOT NULL UNIQUE,
+            branch_id INTEGER NOT NULL,
+            customer_name TEXT NOT NULL,
+            mobile TEXT,
+            car_id INTEGER,
+            pickup_type TEXT NOT NULL,
+            pickup_time TEXT NOT NULL,
+            scheduled_for TEXT,
+            customer_note TEXT,
+            items_json TEXT NOT NULL,
+            amount_minor INTEGER NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'aed',
+            status TEXT NOT NULL DEFAULT 'draft',
+            stripe_payment_intent_id TEXT UNIQUE,
+            order_id INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(branch_id) REFERENCES branches(id),
+            FOREIGN KEY(car_id) REFERENCES customer_cars(id),
+            FOREIGN KEY(order_id) REFERENCES orders(id)
+        );
         """
     )
 
@@ -276,6 +297,22 @@ def init_db():
     ensure_column(conn, "order_items", "sweetness", "TEXT")
     ensure_column(conn, "order_items", "beans", "TEXT")
     ensure_column(conn, "order_items", "item_note", "TEXT")
+    # Stripe TEST MODE checkout: money stored as integer minor units (fils)
+    # alongside the existing decimal columns, which stay authoritative for
+    # every pre-existing order, report, and receipt.
+    ensure_column(conn, "orders", "amount_minor", "INTEGER")
+    ensure_column(conn, "orders", "currency", "TEXT NOT NULL DEFAULT 'aed'")
+    ensure_column(conn, "orders", "stripe_payment_intent_id", "TEXT")
+    ensure_column(conn, "order_items", "unit_price_minor", "INTEGER")
+    conn.commit()
+
+    # One order per Stripe PaymentIntent, enforced by the database itself so
+    # a duplicate webhook delivery racing the synchronous confirmation call
+    # can never materialize two orders for the same payment.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_stripe_payment_intent "
+        "ON orders(stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL"
+    )
     conn.commit()
 
     # Older rows used 'new' for the pre-decision state and 'cancelled' for a
@@ -485,7 +522,7 @@ class OrderItemIn(BaseModel):
     item_note: str = ""
 
 
-class OrderIn(BaseModel):
+class CheckoutDraftIn(BaseModel):
     branch_id: int
     customer_name: str = "Guest"
     mobile: str = ""
@@ -493,9 +530,12 @@ class OrderIn(BaseModel):
     pickup_type: str = "Walk-in"
     pickup_time: str = "ASAP"
     scheduled_for: Optional[str] = None
-    payment_method: str = "Card"
     customer_note: str = ""
     items: list[OrderItemIn]
+
+
+class CheckoutConfirmIn(BaseModel):
+    draft_token: str
 
 
 class StatusIn(BaseModel):
@@ -564,6 +604,17 @@ def serialize_order(conn, row):
     return d
 
 
+def public_order_view(order: dict) -> dict:
+    """Order data returned to an unauthenticated, customer-facing caller
+    (order tracking, checkout confirmation) — strips the internal Stripe
+    PaymentIntent id, which has no legitimate customer-facing use and is
+    the kind of gateway identifier that shouldn't ride along on a public,
+    order-number-keyed lookup."""
+    d = dict(order)
+    d.pop("stripe_payment_intent_id", None)
+    return d
+
+
 def active_order_count(conn, branch_id: int):
     placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
     return conn.execute(
@@ -578,6 +629,243 @@ def branch_eta(conn, branch_row):
     cap = max(1, int(branch_row["capacity"]))
     queue_steps = active // cap
     return base + queue_steps * 5
+
+
+def _validate_pickup_car(conn, payload) -> Optional[int]:
+    """Drive Pickup must require a valid saved car that belongs to the
+    customer identified by the mobile number on the order — never just any
+    car_id the client happens to send."""
+    if payload.pickup_type != "Drive":
+        return None
+    if not payload.car_id:
+        raise HTTPException(400, "Select a saved car for Drive Pickup")
+    mobile = (payload.mobile or "").strip()
+    if not mobile:
+        raise HTTPException(400, "Enter your mobile number to use Drive Pickup")
+    car = conn.execute(
+        """
+        SELECT cc.id FROM customer_cars cc
+        JOIN customer_profiles cp ON cp.id = cc.customer_id
+        WHERE cc.id=? AND cc.active=1 AND cp.mobile=?
+        """,
+        (payload.car_id, mobile),
+    ).fetchone()
+    if not car:
+        raise HTTPException(400, "Selected car was not found. Save it again under My Cars.")
+    return payload.car_id
+
+
+def _price_items_minor(conn, branch, items: list[OrderItemIn]):
+    """Server-side pricing in integer minor units (fils). The client never
+    supplies a price; every amount charged is computed here from the
+    branch's own product/availability data."""
+    total_minor = 0
+    priced = []
+    for item in items:
+        p = conn.execute(
+            """
+            SELECT p.*,bp.available,bp.price_override
+            FROM products p JOIN branch_products bp ON bp.product_id=p.id
+            WHERE p.id=? AND bp.branch_id=? AND p.active=1
+            """,
+            (item.product_id, branch["id"]),
+        ).fetchone()
+        if not p or not p["available"]:
+            raise HTTPException(400, f"Product {item.product_id} is unavailable")
+        if p["station"] == "kitchen" and not branch["has_kitchen"]:
+            raise HTTPException(400, f"{p['name']} is not available at this branch")
+        unit_minor = payments.to_minor_units(p["price_override"] if p["price_override"] is not None else p["price"])
+        if item.size.lower() == "large" and p["station"] == "bar":
+            unit_minor += 400
+        if "oat" in item.milk.lower() and p["station"] == "bar":
+            unit_minor += 300
+        total_minor += unit_minor * item.qty
+        priced.append(
+            {
+                "product_id": p["id"],
+                "product_name": p["name"],
+                "qty": item.qty,
+                "unit_price_minor": unit_minor,
+                "serve": item.serve,
+                "size": item.size,
+                "milk": item.milk,
+                "sweetness": item.sweetness,
+                "beans": item.beans,
+                "item_note": item.item_note,
+                "station": p["station"],
+            }
+        )
+    return total_minor, priced
+
+
+def materialize_order_from_paid_intent(payment_intent_id: str, stripe_intent=None) -> tuple[dict, bool]:
+    """Create the real order from a checkout draft, but only once, and only
+    after independently confirming with Stripe that the payment succeeded
+    for the exact amount and currency the draft was priced at.
+
+    This is the single transactional entry point for turning a paid Stripe
+    PaymentIntent into a real order. The webhook handler and the
+    synchronous /api/checkout/confirm endpoint both call this exact
+    function — never their own copy of the order-creation logic — so a
+    duplicate webhook delivery, a client retry/refresh, or both paths
+    racing each other can never create two orders for one payment.
+
+    Idempotent: if an order already exists for this payment_intent_id, it
+    is returned as-is rather than recreated. A UNIQUE index on
+    orders.stripe_payment_intent_id is the final backstop against a race
+    between two concurrent calls for the same intent.
+
+    Returns (order, is_new). Callers must only broadcast order_created when
+    is_new is True — the order-count guarantee is already database-level
+    idempotent, but without this flag, whichever of the webhook / sync
+    confirm calls this second would still send a duplicate order_created
+    notification to the Shop for an order it didn't actually just create.
+    """
+    conn = db()
+    try:
+        existing = conn.execute(
+            "SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.stripe_payment_intent_id=?",
+            (payment_intent_id,),
+        ).fetchone()
+        if existing:
+            return serialize_order(conn, existing), False
+
+        draft = conn.execute(
+            "SELECT * FROM checkout_drafts WHERE stripe_payment_intent_id=?",
+            (payment_intent_id,),
+        ).fetchone()
+        if not draft:
+            raise payments.PaymentError(f"No checkout draft found for payment intent {payment_intent_id}")
+
+        if stripe_intent is None:
+            stripe_intent = payments.retrieve_payment_intent(payment_intent_id)
+
+        status = stripe_intent["status"]
+        if status != "succeeded":
+            raise payments.PaymentError(f"Payment intent {payment_intent_id} is not succeeded (status={status})")
+
+        amount_received = int(stripe_intent["amount_received"] or 0)
+        if amount_received != draft["amount_minor"]:
+            raise payments.PaymentError(
+                f"Payment amount ({amount_received}) for {payment_intent_id} does not match "
+                f"checkout draft amount ({draft['amount_minor']}) — refusing to create order"
+            )
+        currency = (stripe_intent["currency"] or "").lower()
+        if currency != draft["currency"]:
+            raise payments.PaymentError(
+                f"Payment currency ({currency}) for {payment_intent_id} does not match "
+                f"checkout draft currency ({draft['currency']}) — refusing to create order"
+            )
+
+        branch = conn.execute("SELECT * FROM branches WHERE id=? AND active=1", (draft["branch_id"],)).fetchone()
+        if not branch:
+            raise payments.PaymentError("Branch is no longer available")
+
+        items = json.loads(draft["items_json"])
+        if not items:
+            raise payments.PaymentError("Checkout draft has no items")
+
+        created = datetime.now().isoformat(timespec="seconds")
+        eta = branch_eta(conn, branch)
+        pickup_time = draft["pickup_time"] or f"ASAP · ~{eta} min"
+
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO orders(order_no,branch_id,customer_name,mobile,car_id,pickup_type,pickup_time,scheduled_for,
+                    payment_method,payment_status,status,is_test,total,customer_note,created_at,
+                    amount_minor,currency,stripe_payment_intent_id)
+                VALUES(NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    draft["branch_id"],
+                    draft["customer_name"] or "Guest",
+                    draft["mobile"],
+                    draft["car_id"],
+                    draft["pickup_type"],
+                    pickup_time,
+                    draft["scheduled_for"],
+                    "Stripe (Test Mode)",
+                    "paid",
+                    "awaiting_acceptance",
+                    # This deployment only ever runs Stripe in TEST MODE, so a
+                    # Stripe-paid order must never inflate real revenue reporting.
+                    1,
+                    round(draft["amount_minor"] / 100.0, 2),
+                    draft["customer_note"],
+                    created,
+                    draft["amount_minor"],
+                    draft["currency"],
+                    payment_intent_id,
+                ),
+            )
+            order_id = cur.lastrowid
+            order_no = f"SALEH-{1000 + order_id}"
+            conn.execute("UPDATE orders SET order_no=? WHERE id=?", (order_no, order_id))
+            for item in items:
+                conn.execute(
+                    """
+                    INSERT INTO order_items(order_id,product_id,product_name,qty,unit_price,serve,size,milk,
+                        sweetness,beans,item_note,station,station_status,unit_price_minor)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        order_id,
+                        item["product_id"],
+                        item["product_name"],
+                        item["qty"],
+                        round(item["unit_price_minor"] / 100.0, 2),
+                        item["serve"],
+                        item["size"],
+                        item["milk"],
+                        item["sweetness"],
+                        item["beans"],
+                        item["item_note"],
+                        item["station"],
+                        "pending",
+                        item["unit_price_minor"],
+                    ),
+                )
+            conn.execute(
+                "UPDATE checkout_drafts SET status='materialized',order_id=?,updated_at=? WHERE id=?",
+                (order_id, created, draft["id"]),
+            )
+            conn.commit()
+        except DBIntegrityError:
+            # Lost a race to a concurrent call for the same payment_intent_id
+            # (e.g. the webhook and the synchronous confirm landed at once).
+            conn.rollback()
+            row = conn.execute(
+                "SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.stripe_payment_intent_id=?",
+                (payment_intent_id,),
+            ).fetchone()
+            if not row:
+                raise
+            return serialize_order(conn, row), False
+
+        row = conn.execute(
+            "SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.id=?",
+            (order_id,),
+        ).fetchone()
+        return serialize_order(conn, row), True
+    finally:
+        conn.close()
+
+
+def _mark_draft_payment_state(payment_intent_id: str, status: str) -> None:
+    """Record a terminal non-success PaymentIntent status on its checkout
+    draft, for audit/cleanup only — this never touches orders. A draft that
+    already materialized an order is left alone (a success can't un-happen
+    just because a stale/duplicate failure event arrives after it)."""
+    conn = db()
+    try:
+        conn.execute(
+            "UPDATE checkout_drafts SET status=?,updated_at=? WHERE stripe_payment_intent_id=? AND status!='materialized'",
+            (status, datetime.now().isoformat(timespec="seconds"), payment_intent_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def consume_inventory(conn, order_id: int, branch_id: int):
@@ -1075,117 +1363,211 @@ def order_by_no(order_no: str):
     if not row:
         conn.close()
         raise HTTPException(404, "Order not found")
-    result = serialize_order(conn, row)
+    result = public_order_view(serialize_order(conn, row))
     conn.close()
     return result
 
 
-@app.post("/api/orders")
-async def create_order(payload: OrderIn):
+# ----------------------------
+# Stripe TEST MODE checkout
+#
+# Flow: internal draft (server prices everything) -> Stripe PaymentIntent ->
+# the order is only ever created by materialize_order_from_paid_intent(),
+# called identically from the webhook and from the synchronous confirm
+# endpoint below. No live Stripe mode is possible — see payments.py, which
+# refuses to start with anything but a sk_test_/pk_test_ key pair.
+# ----------------------------
+@app.get("/api/checkout/config")
+def checkout_config():
+    return {
+        "publishable_key": payments.STRIPE_PUBLISHABLE_KEY,
+        "stripe_configured": payments.stripe_configured(),
+        "currency": payments.CURRENCY,
+    }
+
+
+@app.post("/api/checkout/draft")
+def create_checkout_draft(payload: CheckoutDraftIn):
+    if not payload.items:
+        raise HTTPException(400, "Your bag is empty")
     conn = db()
-    branch = conn.execute("SELECT * FROM branches WHERE id=? AND active=1", (payload.branch_id,)).fetchone()
-    if not branch:
-        conn.close()
-        raise HTTPException(400, "Invalid branch")
-    if branch["paused"]:
-        conn.close()
-        raise HTTPException(409, "This branch has temporarily paused new orders")
-    if payload.pickup_type == "Drive" and not branch["drive_enabled"]:
-        conn.close()
-        raise HTTPException(400, "Drive pickup is not available at this branch")
-    if payload.pickup_type == "Walk-in" and not branch["walkin_enabled"]:
-        conn.close()
-        raise HTTPException(400, "Walk-in pickup is not available at this branch")
+    try:
+        branch = conn.execute("SELECT * FROM branches WHERE id=? AND active=1", (payload.branch_id,)).fetchone()
+        if not branch:
+            raise HTTPException(400, "Invalid branch")
+        if branch["paused"]:
+            raise HTTPException(409, "This branch has temporarily paused new orders")
+        if payload.pickup_type == "Drive" and not branch["drive_enabled"]:
+            raise HTTPException(400, "Drive pickup is not available at this branch")
+        if payload.pickup_type == "Walk-in" and not branch["walkin_enabled"]:
+            raise HTTPException(400, "Walk-in pickup is not available at this branch")
 
-    car_id = None
-    if payload.pickup_type == "Drive":
-        if not payload.car_id:
-            conn.close()
-            raise HTTPException(400, "Select a saved car for Drive Pickup")
-        car = conn.execute(
-            "SELECT id FROM customer_cars WHERE id=? AND active=1", (payload.car_id,)
-        ).fetchone()
-        if not car:
-            conn.close()
-            raise HTTPException(400, "Selected car was not found. Save it again under My Cars.")
-        car_id = payload.car_id
+        car_id = _validate_pickup_car(conn, payload)
+        total_minor, priced = _price_items_minor(conn, branch, payload.items)
+        if total_minor <= 0:
+            raise HTTPException(400, "Order total must be greater than zero")
 
-    total = 0.0
-    priced = []
-    for item in payload.items:
-        p = conn.execute(
-            """
-            SELECT p.*,bp.available,bp.price_override
-            FROM products p JOIN branch_products bp ON bp.product_id=p.id
-            WHERE p.id=? AND bp.branch_id=? AND p.active=1
-            """,
-            (item.product_id, payload.branch_id),
-        ).fetchone()
-        if not p or not p["available"]:
-            conn.close()
-            raise HTTPException(400, f"Product {item.product_id} is unavailable")
-        if p["station"] == "kitchen" and not branch["has_kitchen"]:
-            conn.close()
-            raise HTTPException(400, f"{p['name']} is not available at this branch")
-        unit = float(p["price_override"] if p["price_override"] is not None else p["price"])
-        if item.size.lower() == "large" and p["station"] == "bar":
-            unit += 4
-        if "oat" in item.milk.lower() and p["station"] == "bar":
-            unit += 3
-        total += unit * item.qty
-        priced.append((item, p, unit))
-
-    created = datetime.now().isoformat(timespec="seconds")
-    eta = branch_eta(conn, branch)
-    pickup_time = payload.pickup_time or f"ASAP · ~{eta} min"
-    is_test = 1 if payload.payment_method in TEST_PAYMENT_METHODS else 0
-    cur = conn.execute(
-        """
-        INSERT INTO orders(order_no,branch_id,customer_name,mobile,car_id,pickup_type,pickup_time,scheduled_for,
-            payment_method,payment_status,status,is_test,total,customer_note,created_at)
-        VALUES(NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            payload.branch_id,
-            payload.customer_name.strip() or "Guest",
-            payload.mobile,
-            car_id,
-            payload.pickup_type,
-            pickup_time,
-            payload.scheduled_for,
-            payload.payment_method,
-            "paid",
-            "awaiting_acceptance",
-            is_test,
-            round(total, 2),
-            payload.customer_note,
-            created,
-        ),
-    )
-    order_id = cur.lastrowid
-    order_no = f"SALEH-{1000 + order_id}"
-    conn.execute("UPDATE orders SET order_no=? WHERE id=?", (order_no, order_id))
-    for item, p, unit in priced:
+        now = datetime.now().isoformat(timespec="seconds")
+        eta = branch_eta(conn, branch)
+        pickup_time = payload.pickup_time or f"ASAP · ~{eta} min"
+        draft_token = secrets.token_urlsafe(24)
         conn.execute(
             """
-            INSERT INTO order_items(order_id,product_id,product_name,qty,unit_price,serve,size,milk,sweetness,beans,item_note,station,station_status)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO checkout_drafts(draft_token,branch_id,customer_name,mobile,car_id,pickup_type,pickup_time,
+                scheduled_for,customer_note,items_json,amount_minor,currency,status,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                order_id, p["id"], p["name"], item.qty, unit,
-                item.serve, item.size, item.milk, item.sweetness, item.beans, item.item_note,
-                p["station"], "pending",
+                draft_token,
+                payload.branch_id,
+                payload.customer_name.strip() or "Guest",
+                payload.mobile.strip(),
+                car_id,
+                payload.pickup_type,
+                pickup_time,
+                payload.scheduled_for,
+                payload.customer_note.strip(),
+                json.dumps(priced),
+                total_minor,
+                payments.CURRENCY,
+                "draft",
+                now,
+                now,
             ),
         )
-    conn.commit()
-    row = conn.execute(
-        "SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.id=?",
-        (order_id,),
-    ).fetchone()
-    order = serialize_order(conn, row)
-    conn.close()
-    await manager.broadcast({"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}})
-    return order
+        conn.commit()
+        return {
+            "draft_token": draft_token,
+            "amount_minor": total_minor,
+            "currency": payments.CURRENCY,
+            "items": priced,
+            "branch_name": branch["name"],
+            "eta_minutes": eta,
+            "pickup_time": pickup_time,
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/api/checkout/draft/{draft_token}/intent")
+def create_checkout_intent(draft_token: str):
+    conn = db()
+    try:
+        draft = conn.execute("SELECT * FROM checkout_drafts WHERE draft_token=?", (draft_token,)).fetchone()
+        if not draft:
+            raise HTTPException(404, "Checkout session not found")
+        if draft["status"] not in ("draft", "intent_created"):
+            raise HTTPException(409, "This checkout session is no longer active")
+        if not payments.stripe_configured():
+            raise HTTPException(503, "Card payments are not configured on this server")
+
+        # Deterministic per-draft idempotency key: a client retry (e.g. a
+        # flaky network) reuses the same PaymentIntent instead of creating a
+        # second one for the same checkout.
+        idempotency_key = f"checkout-draft-{draft['id']}-intent"
+        try:
+            intent = payments.create_payment_intent(
+                amount_minor=draft["amount_minor"],
+                idempotency_key=idempotency_key,
+                metadata={"draft_token": draft_token, "branch_id": str(draft["branch_id"])},
+            )
+        except payments.PaymentError as exc:
+            raise HTTPException(502, f"Could not start payment: {exc}")
+
+        now = datetime.now().isoformat(timespec="seconds")
+        conn.execute(
+            "UPDATE checkout_drafts SET stripe_payment_intent_id=?,status='intent_created',updated_at=? WHERE id=?",
+            (intent["id"], now, draft["id"]),
+        )
+        conn.commit()
+        return {"client_secret": intent["client_secret"], "publishable_key": payments.STRIPE_PUBLISHABLE_KEY}
+    finally:
+        conn.close()
+
+
+@app.post("/api/checkout/confirm")
+async def confirm_checkout(payload: CheckoutConfirmIn):
+    """Synchronous confirmation path: the client calls this right after
+    Stripe.js reports the payment as confirmed. Calls the exact same
+    materialize_order_from_paid_intent() the webhook calls, so whichever of
+    the two arrives first creates the order and the other is a no-op."""
+    conn = db()
+    try:
+        draft = conn.execute(
+            "SELECT * FROM checkout_drafts WHERE draft_token=?", (payload.draft_token,)
+        ).fetchone()
+        if not draft:
+            raise HTTPException(404, "Checkout session not found")
+        if draft["order_id"]:
+            row = conn.execute(
+                "SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.id=?",
+                (draft["order_id"],),
+            ).fetchone()
+            if row:
+                return public_order_view(serialize_order(conn, row))
+        if not draft["stripe_payment_intent_id"]:
+            raise HTTPException(400, "Payment has not been started for this checkout session")
+        pi_id = draft["stripe_payment_intent_id"]
+    finally:
+        conn.close()
+
+    try:
+        intent = payments.retrieve_payment_intent(pi_id)
+    except payments.PaymentError as exc:
+        raise HTTPException(502, f"Could not verify payment: {exc}")
+
+    status = intent["status"]
+    if status == "succeeded":
+        try:
+            order, is_new = materialize_order_from_paid_intent(pi_id, stripe_intent=intent)
+        except payments.PaymentError as exc:
+            raise HTTPException(409, str(exc))
+        if is_new:
+            await manager.broadcast(
+                {"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}}
+            )
+        return public_order_view(order)
+    if status == "requires_payment_method":
+        _mark_draft_payment_state(pi_id, "payment_failed")
+        raise HTTPException(402, "Payment was not successful. Please try again.")
+    if status == "canceled":
+        _mark_draft_payment_state(pi_id, "canceled")
+        raise HTTPException(402, "Payment was canceled.")
+    raise HTTPException(409, "Payment is still processing. Please wait a moment and try again.")
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    sig = request.headers.get("stripe-signature")
+    try:
+        event = payments.verify_webhook_signature(body, sig)
+    except payments.SignatureVerificationError:
+        raise HTTPException(400, "Invalid webhook signature")
+    except payments.PaymentError as exc:
+        raise HTTPException(400, str(exc))
+
+    if event["type"] == "payment_intent.succeeded":
+        intent = event["data"]["object"]
+        try:
+            order, is_new = materialize_order_from_paid_intent(intent["id"], stripe_intent=intent)
+        except payments.PaymentError as exc:
+            # A payment that cannot be reconciled with any draft, or whose
+            # amount/currency doesn't match what we priced, is a data
+            # integrity problem, not a transient failure — asking Stripe to
+            # retry this exact payload would never succeed.
+            return JSONResponse({"received": True, "error": str(exc)}, status_code=400)
+        if is_new:
+            await manager.broadcast(
+                {"type": "order_created", "order": {"id": order["id"], "branch_id": order["branch_id"], "order_no": order["order_no"]}}
+            )
+    elif event["type"] == "payment_intent.payment_failed":
+        # Never creates an order — only records the terminal state on the
+        # draft for audit/cleanup, same as the synchronous confirm path.
+        _mark_draft_payment_state(event["data"]["object"]["id"], "payment_failed")
+    elif event["type"] == "payment_intent.canceled":
+        _mark_draft_payment_state(event["data"]["object"]["id"], "canceled")
+    return {"received": True}
 
 
 @app.get("/api/orders")

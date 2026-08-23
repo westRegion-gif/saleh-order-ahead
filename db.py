@@ -40,6 +40,7 @@ class Row(dict):
 _TABLES_WITH_ID = (
     "users", "orders", "inventory", "inventory_adjustments", "products",
     "branches", "order_items", "customer_profiles", "customer_cars",
+    "checkout_drafts",
 )
 _ID_INSERT_RE = re.compile(
     r"^\s*INSERT\s+INTO\s+(" + "|".join(_TABLES_WITH_ID) + r")\b", re.I
