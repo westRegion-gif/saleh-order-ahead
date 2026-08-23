@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+import asyncio
 import base64
 import csv
 import hashlib
@@ -11,7 +12,6 @@ import io
 import json
 import os
 import secrets
-import sqlite3
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, JSONResponse
@@ -19,8 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from db import get_conn, ensure_column, IntegrityError as DBIntegrityError
+
 BASE = Path(__file__).resolve().parent
-DB_PATH = BASE / "saleh.db"
 
 app = FastAPI(title="Saleh Order Ahead V4")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
@@ -54,10 +55,33 @@ manager = ConnectionManager()
 
 
 def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    return get_conn()
+
+
+ORDER_STATUSES = {
+    "awaiting_acceptance",
+    "pending",
+    "preparing",
+    "ready",
+    "completed",
+    "rejected",
+    "cancelled",
+}
+ACTIVE_STATUSES = ("awaiting_acceptance", "pending", "preparing")
+PENDING_ESCALATION_SECONDS = 90
+# Orders placed without a connected live payment gateway are flagged as test
+# orders so they never inflate real paid-sales reporting.
+TEST_PAYMENT_METHODS = {"Test Payment"}
+
+# Manually settable transitions via /api/orders/{id}/status. 'pending' is
+# reached only through the server-side 90-second escalation task, never
+# accepted directly from a client here.
+STATUS_TRANSITIONS = {
+    "awaiting_acceptance": {"preparing", "rejected", "cancelled"},
+    "pending": {"preparing", "rejected", "cancelled"},
+    "preparing": {"ready", "cancelled"},
+    "ready": {"completed"},
+}
 
 
 PRODUCTS = [
@@ -142,16 +166,21 @@ def init_db():
             branch_id INTEGER NOT NULL,
             customer_name TEXT NOT NULL,
             mobile TEXT,
+            car_id INTEGER,
             pickup_type TEXT NOT NULL DEFAULT 'Walk-in',
             pickup_time TEXT NOT NULL DEFAULT 'ASAP',
             scheduled_for TEXT,
             payment_method TEXT NOT NULL,
             payment_status TEXT NOT NULL,
             status TEXT NOT NULL,
+            is_test INTEGER NOT NULL DEFAULT 0,
             total REAL NOT NULL,
             customer_note TEXT,
+            rejection_reason TEXT,
             created_at TEXT NOT NULL,
             accepted_at TEXT,
+            pending_at TEXT,
+            rejected_at TEXT,
             ready_at TEXT,
             completed_at TEXT,
             FOREIGN KEY(branch_id) REFERENCES branches(id)
@@ -163,12 +192,38 @@ def init_db():
             product_name TEXT NOT NULL,
             qty INTEGER NOT NULL,
             unit_price REAL NOT NULL,
+            serve TEXT,
             size TEXT,
             milk TEXT,
+            sweetness TEXT,
+            beans TEXT,
+            item_note TEXT,
             station TEXT NOT NULL,
             station_status TEXT NOT NULL DEFAULT 'pending',
             FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
             FOREIGN KEY(product_id) REFERENCES products(id)
+        );
+        CREATE TABLE IF NOT EXISTS customer_profiles(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mobile TEXT NOT NULL UNIQUE,
+            name TEXT,
+            email TEXT,
+            favorite_branch_id INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(favorite_branch_id) REFERENCES branches(id)
+        );
+        CREATE TABLE IF NOT EXISTS customer_cars(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            brand TEXT NOT NULL,
+            emirate TEXT NOT NULL,
+            plate_category TEXT,
+            plate_number TEXT NOT NULL,
+            nickname TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(customer_id) REFERENCES customer_profiles(id) ON DELETE CASCADE
         );
         CREATE TABLE IF NOT EXISTS inventory(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,6 +264,25 @@ def init_db():
         );
         """
     )
+
+    # Additive migrations for databases created before these columns existed.
+    # Never drops or rewrites existing data.
+    ensure_column(conn, "orders", "car_id", "INTEGER")
+    ensure_column(conn, "orders", "is_test", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "orders", "rejection_reason", "TEXT")
+    ensure_column(conn, "orders", "pending_at", "TEXT")
+    ensure_column(conn, "orders", "rejected_at", "TEXT")
+    ensure_column(conn, "order_items", "serve", "TEXT")
+    ensure_column(conn, "order_items", "sweetness", "TEXT")
+    ensure_column(conn, "order_items", "beans", "TEXT")
+    ensure_column(conn, "order_items", "item_note", "TEXT")
+    conn.commit()
+
+    # Older rows used 'new' for the pre-decision state and 'cancelled' for a
+    # branch rejection; align them with the persistent status set without
+    # touching any other order data.
+    conn.execute("UPDATE orders SET status='awaiting_acceptance' WHERE status='new'")
+    conn.commit()
 
     if conn.execute("SELECT COUNT(*) FROM branches").fetchone()[0] == 0:
         conn.executemany(
@@ -403,14 +477,19 @@ class UserUpdateIn(BaseModel):
 class OrderItemIn(BaseModel):
     product_id: int
     qty: int = Field(ge=1, le=20)
+    serve: str = "Hot"
     size: str = "Regular"
     milk: str = "Regular Milk"
+    sweetness: str = "Regular"
+    beans: str = "House Blend"
+    item_note: str = ""
 
 
 class OrderIn(BaseModel):
     branch_id: int
     customer_name: str = "Guest"
     mobile: str = ""
+    car_id: Optional[int] = None
     pickup_type: str = "Walk-in"
     pickup_time: str = "ASAP"
     scheduled_for: Optional[str] = None
@@ -421,6 +500,22 @@ class OrderIn(BaseModel):
 
 class StatusIn(BaseModel):
     status: str
+    reason: str = ""
+
+
+class CustomerProfileIn(BaseModel):
+    mobile: str
+    name: str = ""
+    email: str = ""
+    favorite_branch_id: Optional[int] = None
+
+
+class CustomerCarIn(BaseModel):
+    brand: str
+    emirate: str
+    plate_category: str = ""
+    plate_number: str
+    nickname: str = ""
 
 
 class BranchSettingsIn(BaseModel):
@@ -449,19 +544,31 @@ def serialize_order(conn, row):
     items = [
         dict(x)
         for x in conn.execute(
-            "SELECT id,product_id,product_name,qty,unit_price,size,milk,station,station_status FROM order_items WHERE order_id=? ORDER BY id",
+            """
+            SELECT id,product_id,product_name,qty,unit_price,serve,size,milk,sweetness,beans,item_note,station,station_status
+            FROM order_items WHERE order_id=? ORDER BY id
+            """,
             (row["id"],),
         ).fetchall()
     ]
     d = dict(row)
     d["items"] = items
+    if d.get("car_id"):
+        car = conn.execute(
+            "SELECT id,brand,emirate,plate_category,plate_number,nickname FROM customer_cars WHERE id=?",
+            (d["car_id"],),
+        ).fetchone()
+        d["car"] = dict(car) if car else None
+    else:
+        d["car"] = None
     return d
 
 
 def active_order_count(conn, branch_id: int):
+    placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
     return conn.execute(
-        "SELECT COUNT(*) FROM orders WHERE branch_id=? AND status IN ('new','preparing')",
-        (branch_id,),
+        f"SELECT COUNT(*) FROM orders WHERE branch_id=? AND status IN ({placeholders})",
+        (branch_id, *ACTIVE_STATUSES),
     ).fetchone()[0]
 
 
@@ -523,7 +630,7 @@ def period_bounds(period: str):
 
 def report_data(conn, period: str = "weekly", branch_id: Optional[int] = None):
     start, end = period_bounds(period)
-    where = "o.created_at>=? AND o.created_at<=? AND o.payment_status='paid' AND o.status!='cancelled'"
+    where = "o.created_at>=? AND o.created_at<=? AND o.payment_status='paid' AND o.status NOT IN ('cancelled','rejected') AND o.is_test=0"
     args: list = [start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")]
     if branch_id:
         where += " AND o.branch_id=?"
@@ -550,7 +657,7 @@ def report_data(conn, period: str = "weekly", branch_id: Optional[int] = None):
         for x in conn.execute(
             f"""
             SELECT b.id,b.name,COALESCE(SUM(o.total),0) sales,COUNT(o.id) orders,COALESCE(AVG(o.total),0) avg_order
-            FROM branches b LEFT JOIN orders o ON o.branch_id=b.id AND o.created_at>=? AND o.created_at<=? AND o.payment_status='paid' AND o.status!='cancelled'
+            FROM branches b LEFT JOIN orders o ON o.branch_id=b.id AND o.created_at>=? AND o.created_at<=? AND o.payment_status='paid' AND o.status NOT IN ('cancelled','rejected') AND o.is_test=0
             {"WHERE b.id=?" if branch_id else ""}
             GROUP BY b.id,b.name ORDER BY sales DESC
             """,
@@ -699,7 +806,7 @@ def create_user(payload: UserCreateIn, request: Request):
             (username, hash_password(payload.password), role, branch_id, datetime.now().isoformat(timespec="seconds")),
         )
         conn.commit()
-    except sqlite3.IntegrityError:
+    except DBIntegrityError:
         conn.close()
         raise HTTPException(409, "Username already exists")
     user_id = cur.lastrowid
@@ -844,6 +951,120 @@ def products(branch_id: Optional[int] = None):
     return rows
 
 
+def _serialize_car(row):
+    return {
+        "id": row["id"],
+        "brand": row["brand"],
+        "emirate": row["emirate"],
+        "plate_category": row["plate_category"],
+        "plate_number": row["plate_number"],
+        "nickname": row["nickname"],
+    }
+
+
+@app.get("/api/customers/{mobile}")
+def get_customer(mobile: str):
+    mobile = mobile.strip()
+    conn = db()
+    profile = conn.execute("SELECT * FROM customer_profiles WHERE mobile=?", (mobile,)).fetchone()
+    if not profile:
+        conn.close()
+        return {"profile": None, "cars": []}
+    cars = [
+        _serialize_car(x)
+        for x in conn.execute(
+            "SELECT * FROM customer_cars WHERE customer_id=? AND active=1 ORDER BY id", (profile["id"],)
+        ).fetchall()
+    ]
+    conn.close()
+    return {"profile": dict(profile), "cars": cars}
+
+
+@app.post("/api/customers/profile")
+def upsert_customer_profile(payload: CustomerProfileIn):
+    mobile = payload.mobile.strip()
+    if not mobile:
+        raise HTTPException(400, "Mobile number is required")
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = db()
+    existing = conn.execute("SELECT * FROM customer_profiles WHERE mobile=?", (mobile,)).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE customer_profiles SET name=?,email=?,favorite_branch_id=?,updated_at=? WHERE id=?",
+            (
+                payload.name.strip() or existing["name"],
+                payload.email.strip() or existing["email"],
+                payload.favorite_branch_id if payload.favorite_branch_id is not None else existing["favorite_branch_id"],
+                now,
+                existing["id"],
+            ),
+        )
+        profile_id = existing["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO customer_profiles(mobile,name,email,favorite_branch_id,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (mobile, payload.name.strip(), payload.email.strip(), payload.favorite_branch_id, now, now),
+        )
+        profile_id = cur.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM customer_profiles WHERE id=?", (profile_id,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+@app.post("/api/customers/{mobile}/cars")
+def add_customer_car(mobile: str, payload: CustomerCarIn):
+    mobile = mobile.strip()
+    if not mobile:
+        raise HTTPException(400, "Mobile number is required")
+    if not payload.brand.strip() or not payload.plate_number.strip():
+        raise HTTPException(400, "Car brand and plate number are required")
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = db()
+    profile = conn.execute("SELECT * FROM customer_profiles WHERE mobile=?", (mobile,)).fetchone()
+    if not profile:
+        cur = conn.execute(
+            "INSERT INTO customer_profiles(mobile,name,email,favorite_branch_id,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (mobile, "", "", None, now, now),
+        )
+        profile_id = cur.lastrowid
+    else:
+        profile_id = profile["id"]
+    cur = conn.execute(
+        """
+        INSERT INTO customer_cars(customer_id,brand,emirate,plate_category,plate_number,nickname,active,created_at)
+        VALUES(?,?,?,?,?,?,1,?)
+        """,
+        (
+            profile_id,
+            payload.brand.strip(),
+            payload.emirate.strip(),
+            payload.plate_category.strip(),
+            payload.plate_number.strip(),
+            payload.nickname.strip(),
+            now,
+        ),
+    )
+    car_id = cur.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM customer_cars WHERE id=?", (car_id,)).fetchone()
+    conn.close()
+    return _serialize_car(row)
+
+
+@app.delete("/api/customers/cars/{car_id}")
+def delete_customer_car(car_id: int):
+    conn = db()
+    row = conn.execute("SELECT id FROM customer_cars WHERE id=?", (car_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Car not found")
+    conn.execute("UPDATE customer_cars SET active=0 WHERE id=?", (car_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 @app.get("/api/order/{order_no}")
 def order_by_no(order_no: str):
     conn = db()
@@ -876,6 +1097,19 @@ async def create_order(payload: OrderIn):
         conn.close()
         raise HTTPException(400, "Walk-in pickup is not available at this branch")
 
+    car_id = None
+    if payload.pickup_type == "Drive":
+        if not payload.car_id:
+            conn.close()
+            raise HTTPException(400, "Select a saved car for Drive Pickup")
+        car = conn.execute(
+            "SELECT id FROM customer_cars WHERE id=? AND active=1", (payload.car_id,)
+        ).fetchone()
+        if not car:
+            conn.close()
+            raise HTTPException(400, "Selected car was not found. Save it again under My Cars.")
+        car_id = payload.car_id
+
     total = 0.0
     priced = []
     for item in payload.items:
@@ -904,22 +1138,25 @@ async def create_order(payload: OrderIn):
     created = datetime.now().isoformat(timespec="seconds")
     eta = branch_eta(conn, branch)
     pickup_time = payload.pickup_time or f"ASAP · ~{eta} min"
+    is_test = 1 if payload.payment_method in TEST_PAYMENT_METHODS else 0
     cur = conn.execute(
         """
-        INSERT INTO orders(order_no,branch_id,customer_name,mobile,pickup_type,pickup_time,scheduled_for,
-            payment_method,payment_status,status,total,customer_note,created_at)
-        VALUES(NULL,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO orders(order_no,branch_id,customer_name,mobile,car_id,pickup_type,pickup_time,scheduled_for,
+            payment_method,payment_status,status,is_test,total,customer_note,created_at)
+        VALUES(NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             payload.branch_id,
             payload.customer_name.strip() or "Guest",
             payload.mobile,
+            car_id,
             payload.pickup_type,
             pickup_time,
             payload.scheduled_for,
             payload.payment_method,
             "paid",
-            "new",
+            "awaiting_acceptance",
+            is_test,
             round(total, 2),
             payload.customer_note,
             created,
@@ -931,10 +1168,14 @@ async def create_order(payload: OrderIn):
     for item, p, unit in priced:
         conn.execute(
             """
-            INSERT INTO order_items(order_id,product_id,product_name,qty,unit_price,size,milk,station,station_status)
-            VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT INTO order_items(order_id,product_id,product_name,qty,unit_price,serve,size,milk,sweetness,beans,item_note,station,station_status)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
-            (order_id, p["id"], p["name"], item.qty, unit, item.size, item.milk, p["station"], "pending"),
+            (
+                order_id, p["id"], p["name"], item.qty, unit,
+                item.serve, item.size, item.milk, item.sweetness, item.beans, item.item_note,
+                p["station"], "pending",
+            ),
         )
     conn.commit()
     row = conn.execute(
@@ -972,8 +1213,7 @@ def orders(request: Request, branch_id: Optional[int] = None, status: Optional[s
 
 @app.patch("/api/orders/{order_id}/status")
 async def set_status(order_id: int, payload: StatusIn, request: Request):
-    allowed = {"new", "preparing", "ready", "completed", "cancelled"}
-    if payload.status not in allowed:
+    if payload.status not in ORDER_STATUSES:
         raise HTTPException(400, "Invalid status")
     conn = db()
     row = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
@@ -982,10 +1222,24 @@ async def set_status(order_id: int, payload: StatusIn, request: Request):
         raise HTTPException(404, "Order not found")
     require_api_user(request, {"admin","manager","branch"}, row["branch_id"])
 
+    current = row["status"]
+    if payload.status not in STATUS_TRANSITIONS.get(current, set()):
+        conn.close()
+        raise HTTPException(400, f"Cannot move an order from '{current}' to '{payload.status}'")
+
     now = datetime.now().isoformat(timespec="seconds")
-    if payload.status == "preparing" and row["status"] == "new":
+    if payload.status == "preparing":
         conn.execute("UPDATE orders SET status='preparing',accepted_at=? WHERE id=?", (now, order_id))
         consume_inventory(conn, order_id, row["branch_id"])
+    elif payload.status == "rejected":
+        reason = payload.reason.strip()
+        if not reason:
+            conn.close()
+            raise HTTPException(400, "A rejection reason is required")
+        conn.execute(
+            "UPDATE orders SET status='rejected',rejected_at=?,rejection_reason=? WHERE id=?",
+            (now, reason, order_id),
+        )
     elif payload.status == "ready":
         conn.execute("UPDATE order_items SET station_status='done' WHERE order_id=?", (order_id,))
         conn.execute("UPDATE orders SET status='ready',ready_at=? WHERE id=?", (now, order_id))
@@ -1041,7 +1295,7 @@ def dashboard(request: Request, branch_id: Optional[int] = None):
     require_api_user(request, {"admin","manager"})
     conn = db()
     today = datetime.now().strftime("%Y-%m-%d")
-    where = "substr(o.created_at,1,10)=? AND o.payment_status='paid' AND o.status!='cancelled'"
+    where = "substr(o.created_at,1,10)=? AND o.payment_status='paid' AND o.status NOT IN ('cancelled','rejected') AND o.is_test=0"
     args: list = [today]
     if branch_id:
         where += " AND o.branch_id=?"
@@ -1067,9 +1321,9 @@ def dashboard(request: Request, branch_id: Optional[int] = None):
         for x in conn.execute(
             """
             SELECT b.id,b.name,b.has_kitchen,b.paused,b.base_prep_minutes,b.capacity,
-                   COALESCE(SUM(CASE WHEN substr(o.created_at,1,10)=? AND o.payment_status='paid' AND o.status!='cancelled' THEN o.total ELSE 0 END),0) sales,
-                   SUM(CASE WHEN substr(o.created_at,1,10)=? AND o.payment_status='paid' AND o.status!='cancelled' THEN 1 ELSE 0 END) orders,
-                   SUM(CASE WHEN o.status IN ('new','preparing','ready') THEN 1 ELSE 0 END) active_orders
+                   COALESCE(SUM(CASE WHEN substr(o.created_at,1,10)=? AND o.payment_status='paid' AND o.status NOT IN ('cancelled','rejected') AND o.is_test=0 THEN o.total ELSE 0 END),0) sales,
+                   SUM(CASE WHEN substr(o.created_at,1,10)=? AND o.payment_status='paid' AND o.status NOT IN ('cancelled','rejected') AND o.is_test=0 THEN 1 ELSE 0 END) orders,
+                   SUM(CASE WHEN o.status IN ('awaiting_acceptance','pending','preparing','ready') THEN 1 ELSE 0 END) active_orders
             FROM branches b LEFT JOIN orders o ON o.branch_id=b.id
             WHERE b.active=1 GROUP BY b.id ORDER BY sales DESC,b.name
             """,
@@ -1309,7 +1563,7 @@ def closing(branch_id: int, request: Request):
         (branch_id,),
     ).fetchall()]
     cancelled = conn.execute(
-        "SELECT COUNT(*) FROM orders WHERE branch_id=? AND substr(created_at,1,10)=? AND status='cancelled'",
+        "SELECT COUNT(*) FROM orders WHERE branch_id=? AND substr(created_at,1,10)=? AND status IN ('cancelled','rejected')",
         (branch_id, datetime.now().strftime("%Y-%m-%d")),
     ).fetchone()[0]
     data["low_stock"] = low
@@ -1324,7 +1578,7 @@ def forecast(request: Request, branch_id: Optional[int] = None):
     conn = db()
     end = datetime.now()
     start = end - timedelta(days=28)
-    q = "SELECT substr(created_at,1,10) day,SUM(total) sales,COUNT(*) orders FROM orders WHERE created_at>=? AND payment_status='paid' AND status!='cancelled'"
+    q = "SELECT substr(created_at,1,10) day,SUM(total) sales,COUNT(*) orders FROM orders WHERE created_at>=? AND payment_status='paid' AND status NOT IN ('cancelled','rejected') AND is_test=0"
     args: list = [start.isoformat(timespec="seconds")]
     if branch_id:
         q += " AND branch_id=?"
@@ -1352,3 +1606,44 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+async def escalate_pending_orders():
+    """Server-backed 90-second escalation: awaiting_acceptance -> pending.
+
+    Persists the transition to the database (not just a client-side timer)
+    so every screen watching an order sees the same authoritative state.
+    """
+    while True:
+        try:
+            cutoff = (datetime.now() - timedelta(seconds=PENDING_ESCALATION_SECONDS)).isoformat(timespec="seconds")
+            now = datetime.now().isoformat(timespec="seconds")
+            conn = db()
+            due = conn.execute(
+                "SELECT id,branch_id,order_no FROM orders WHERE status='awaiting_acceptance' AND created_at<=?",
+                (cutoff,),
+            ).fetchall()
+            escalated = []
+            for row in due:
+                conn.execute(
+                    "UPDATE orders SET status='pending',pending_at=? WHERE id=? AND status='awaiting_acceptance'",
+                    (now, row["id"]),
+                )
+                escalated.append(dict(row))
+            conn.commit()
+            conn.close()
+            for row in escalated:
+                await manager.broadcast(
+                    {
+                        "type": "order_updated",
+                        "order": {"id": row["id"], "branch_id": row["branch_id"], "order_no": row["order_no"], "status": "pending"},
+                    }
+                )
+        except Exception:
+            pass
+        await asyncio.sleep(5)
+
+
+@app.on_event("startup")
+async def start_background_tasks():
+    asyncio.create_task(escalate_pending_orders())
