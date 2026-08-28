@@ -2,126 +2,46 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 
-type Category = { id:string; nameAr:string; nameEn?:string|null; imageUrl?:string|null; isActive:boolean };
-type BranchProduct = { branchId:string; productId:string; isAvailable:boolean; priceOverride?:string|null; soldOutReason?:string|null; branch:{id:string;nameAr:string;nameEn?:string|null} };
-type Product = { id:string; sku:string; nameAr:string; nameEn?:string|null; descriptionAr?:string|null; imageUrl?:string|null; basePrice:string; isActive:boolean; category?:Category|null; categoryId?:string|null; branchProducts:BranchProduct[] };
-type Branch = { id:string; nameAr:string; nameEn?:string|null; acceptsOrders:boolean; isActive:boolean };
+type Category={id:string;nameAr:string;nameEn?:string|null;isActive:boolean};
+type Branch={id:string;nameAr:string;nameEn?:string|null;acceptsOrders:boolean;isActive:boolean};
+type BranchProduct={branchId:string;productId:string;isAvailable:boolean;priceOverride?:string|null;soldOutReason?:string|null};
+type Product={id:string;sku:string;nameAr:string;nameEn?:string|null;descriptionAr?:string|null;imageUrl?:string|null;basePrice:string;isActive:boolean;category?:Category|null;categoryId?:string|null;branchProducts:BranchProduct[]};
+type Tab='dashboard'|'orders'|'products'|'categories'|'modifiers'|'branches'|'availability'|'promotions'|'customers'|'reports'|'settings';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
+const API=process.env.NEXT_PUBLIC_API_URL||'http://localhost:3000/v1';
+const NAV:[Tab,string,string][]=[
+ ['dashboard','Dashboard','Overview'],['orders','Live Orders','Kitchen flow'],['products','Menu & Products','Catalog'],['categories','Categories','Menu structure'],['modifiers','Modifiers','Sizes & extras'],['branches','Branches','Stores'],['availability','Availability','Sold out controls'],['promotions','Promotions','Offers'],['customers','Customers','CRM'],['reports','Reports','Sales'],['settings','Settings','System']
+];
 
 export default function AdminHome(){
-  const [products,setProducts]=useState<Product[]>([]);
-  const [categories,setCategories]=useState<Category[]>([]);
-  const [branches,setBranches]=useState<Branch[]>([]);
-  const [selected,setSelected]=useState<Product|null>(null);
-  const [loading,setLoading]=useState(true);
-  const [saving,setSaving]=useState(false);
-  const [message,setMessage]=useState('');
-  const [tab,setTab]=useState<'products'|'categories'|'branches'>('products');
-
-  async function load(){
-    setLoading(true);
-    try{
-      const [p,c,b]=await Promise.all([
-        fetch(`${API}/admin/catalog/products`,{cache:'no-store'}),
-        fetch(`${API}/admin/catalog/categories`,{cache:'no-store'}),
-        fetch(`${API}/admin/catalog/branches`,{cache:'no-store'}),
-      ]);
-      if(!p.ok||!c.ok||!b.ok) throw new Error('API unavailable');
-      setProducts(await p.json()); setCategories(await c.json()); setBranches(await b.json());
-    }catch(e){setMessage('تعذر الاتصال بالـ API. تأكد من NEXT_PUBLIC_API_URL وتشغيل خدمة LMTD API.');}
-    finally{setLoading(false);}
-  }
-  useEffect(()=>{load();},[]);
-
-  const activeCount=useMemo(()=>products.filter(p=>p.isActive).length,[products]);
-
-  async function saveProduct(e:FormEvent<HTMLFormElement>){
-    e.preventDefault(); setSaving(true); setMessage('');
-    const fd=new FormData(e.currentTarget);
-    const body={
-      sku:String(fd.get('sku')||''), nameAr:String(fd.get('nameAr')||''), nameEn:String(fd.get('nameEn')||''),
-      descriptionAr:String(fd.get('descriptionAr')||''), imageUrl:String(fd.get('imageUrl')||''),
-      basePrice:Number(fd.get('basePrice')||0), categoryId:String(fd.get('categoryId')||'')||undefined,
-      isActive:fd.get('isActive')==='on'
-    };
-    const url=selected?`${API}/admin/catalog/products/${selected.id}`:`${API}/admin/catalog/products`;
-    const res=await fetch(url,{method:selected?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    setSaving(false);
-    if(!res.ok){setMessage('فشل حفظ المنتج. راجع البيانات أو اتصال الـ API.');return;}
-    setSelected(null); setMessage('تم حفظ المنتج بنجاح.'); await load();
-  }
-
-  async function deactivate(id:string){
-    if(!confirm('إخفاء هذا المنتج من المنيو؟')) return;
-    const res=await fetch(`${API}/admin/catalog/products/${id}`,{method:'DELETE'});
-    if(res.ok){setMessage('تم إخفاء المنتج.');await load();}
-  }
-
-  async function addCategory(e:FormEvent<HTMLFormElement>){
-    e.preventDefault(); const fd=new FormData(e.currentTarget);
-    const res=await fetch(`${API}/admin/catalog/categories`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nameAr:String(fd.get('nameAr')||''),nameEn:String(fd.get('nameEn')||''),isActive:true})});
-    if(res.ok){e.currentTarget.reset();setMessage('تمت إضافة التصنيف.');await load();}
-  }
-
-  async function toggleAvailability(product:Product,bp:BranchProduct){
-    const res=await fetch(`${API}/admin/catalog/branches/${bp.branchId}/products/${product.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({isAvailable:!bp.isAvailable})});
-    if(res.ok) await load();
-  }
-
-  return <main className="adminShell">
-    <aside className="sidebar">
-      <div className="logo">LMTD<span>ADMIN</span></div>
-      <nav>
-        <button className={tab==='products'?'active':''} onClick={()=>setTab('products')}>المنتجات</button>
-        <button className={tab==='categories'?'active':''} onClick={()=>setTab('categories')}>التصنيفات</button>
-        <button className={tab==='branches'?'active':''} onClick={()=>setTab('branches')}>الفروع والتوفر</button>
-      </nav>
-      <div className="sideNote">Catalog Console<br/><small>UAE · AED</small></div>
-    </aside>
-
-    <section className="workspace">
-      <header className="adminTop"><div><b>LMTD Coffee</b><span>Content & Catalog Management</span></div><button onClick={load}>تحديث البيانات</button></header>
-      <div className="content">
-        <div className="stats">
-          <article><span>المنتجات</span><strong>{products.length}</strong></article>
-          <article><span>المنتجات الفعالة</span><strong>{activeCount}</strong></article>
-          <article><span>التصنيفات</span><strong>{categories.length}</strong></article>
-          <article><span>الفروع</span><strong>{branches.length}</strong></article>
-        </div>
-        {message&&<div className="notice">{message}</div>}
-
-        {tab==='products'&&<div className="split">
-          <div className="panel">
-            <div className="panelHead"><div><h1>المنتجات</h1><p>عدّل المنيو من هنا. التغييرات تحفظ في PostgreSQL.</p></div><button className="black" onClick={()=>setSelected({} as Product)}>+ منتج جديد</button></div>
-            {loading?<p>جاري التحميل…</p>:<div className="productTable">
-              {products.map(p=><article className="productCard" key={p.id}>
-                <div className="thumb">{p.imageUrl?<img src={p.imageUrl} alt=""/>:<span>NO IMAGE</span>}</div>
-                <div className="productInfo"><b>{p.nameEn||p.nameAr}</b><span>{p.category?.nameAr||'بدون تصنيف'} · AED {Number(p.basePrice).toFixed(2)}</span><small>{p.sku}</small></div>
-                <span className={p.isActive?'status on':'status off'}>{p.isActive?'Active':'Hidden'}</span>
-                <div className="actions"><button onClick={()=>setSelected(p)}>تعديل</button><button onClick={()=>deactivate(p.id)}>إخفاء</button></div>
-              </article>)}
-            </div>}
-          </div>
-          <div className="panel editor">
-            <h2>{selected?.id?'تعديل المنتج':'إضافة منتج'}</h2>
-            {!selected?<div className="emptyEditor">اختر منتج من القائمة أو اضغط «منتج جديد».</div>:<form className="adminForm" onSubmit={saveProduct}>
-              <label>SKU<input name="sku" required defaultValue={selected.sku||''}/></label>
-              <div className="two"><label>الاسم بالعربي<input name="nameAr" required defaultValue={selected.nameAr||''}/></label><label>English name<input name="nameEn" defaultValue={selected.nameEn||''}/></label></div>
-              <label>الوصف<textarea name="descriptionAr" rows={3} defaultValue={selected.descriptionAr||''}/></label>
-              <div className="two"><label>السعر AED<input name="basePrice" type="number" step="0.01" min="0" required defaultValue={selected.basePrice||''}/></label><label>التصنيف<select name="categoryId" defaultValue={selected.categoryId||selected.category?.id||''}><option value="">بدون تصنيف</option>{categories.map(c=><option value={c.id} key={c.id}>{c.nameAr}</option>)}</select></label></div>
-              <label>صورة المنتج — URL<input name="imageUrl" placeholder="https://..." defaultValue={selected.imageUrl||''}/></label>
-              {selected.imageUrl&&<img className="imagePreview" src={selected.imageUrl} alt="preview"/>}
-              <label className="check"><input name="isActive" type="checkbox" defaultChecked={selected.id?selected.isActive:true}/> المنتج ظاهر في المنيو</label>
-              <div className="formActions"><button type="button" onClick={()=>setSelected(null)}>إلغاء</button><button className="black" disabled={saving}>{saving?'جاري الحفظ…':'حفظ المنتج'}</button></div>
-            </form>}
-          </div>
-        </div>}
-
-        {tab==='categories'&&<div className="panel single"><div className="panelHead"><div><h1>التصنيفات</h1><p>قهوة، ماتشا، حلويات، أكل وغيرها.</p></div></div><form className="inlineForm" onSubmit={addCategory}><input name="nameAr" placeholder="الاسم بالعربي" required/><input name="nameEn" placeholder="English name"/><button className="black">إضافة</button></form><div className="categoryGrid">{categories.map(c=><article key={c.id}><b>{c.nameAr}</b><span>{c.nameEn}</span><small>{c.isActive?'Active':'Hidden'}</small></article>)}</div></div>}
-
-        {tab==='branches'&&<div className="panel single"><div className="panelHead"><div><h1>توفر المنتجات حسب الفرع</h1><p>إيقاف منتج في فرع واحد بدون حذفه من باقي الفروع.</p></div></div>{branches.map(branch=><section className="branchSection" key={branch.id}><h2>{branch.nameEn||branch.nameAr}</h2><div className="availabilityGrid">{products.map(product=>{const bp=product.branchProducts?.find(x=>x.branchId===branch.id);return <button key={product.id} className={bp?.isAvailable!==false?'availability available':'availability unavailable'} onClick={()=>bp&&toggleAvailability(product,bp)}><span>{product.nameEn||product.nameAr}</span><b>{bp?.isAvailable!==false?'متوفر':'غير متوفر'}</b></button>})}</div></section>)}</div>}
-      </div>
-    </section>
-  </main>;
+ const [tab,setTab]=useState<Tab>('dashboard');
+ const [products,setProducts]=useState<Product[]>([]); const [categories,setCategories]=useState<Category[]>([]); const [branches,setBranches]=useState<Branch[]>([]);
+ const [selected,setSelected]=useState<Product|null>(null); const [loading,setLoading]=useState(true); const [saving,setSaving]=useState(false); const [message,setMessage]=useState(''); const [uploading,setUploading]=useState(false); const [imageUrl,setImageUrl]=useState('');
+ async function load(){setLoading(true);try{const [p,c,b]=await Promise.all([fetch(`${API}/admin/catalog/products`,{cache:'no-store'}),fetch(`${API}/admin/catalog/categories`,{cache:'no-store'}),fetch(`${API}/admin/catalog/branches`,{cache:'no-store'})]);if(!p.ok||!c.ok||!b.ok)throw new Error();setProducts(await p.json());setCategories(await c.json());setBranches(await b.json());setMessage('');}catch{setMessage('API غير متصل حالياً. بعد نشر خدمة LMTD API وربط NEXT_PUBLIC_API_URL ستصبح البيانات مباشرة.');}finally{setLoading(false)}}
+ useEffect(()=>{load()},[]);
+ const active=useMemo(()=>products.filter(x=>x.isActive).length,[products]); const available=useMemo(()=>products.flatMap(x=>x.branchProducts||[]).filter(x=>x.isAvailable).length,[products]);
+ function edit(p?:Product){setSelected(p||({} as Product));setImageUrl(p?.imageUrl||'');setTab('products')}
+ async function upload(file:File){if(!['image/jpeg','image/png','image/webp'].includes(file.type)){setMessage('استخدم JPG أو PNG أو WEBP.');return}setUploading(true);try{const r=await fetch(`${API}/admin/media/presign`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:file.name,contentType:file.type})});if(!r.ok)throw new Error();const {uploadUrl,publicUrl}=await r.json();const u=await fetch(uploadUrl,{method:'PUT',headers:{'Content-Type':file.type},body:file});if(!u.ok)throw new Error();setImageUrl(publicUrl);setMessage('تم رفع الصورة. اضغط حفظ المنتج لتطبيقها.');}catch{setMessage('تعذر رفع الصورة. تأكد من إعداد S3/Object Storage في خدمة API.');}finally{setUploading(false)}}
+ async function saveProduct(e:FormEvent<HTMLFormElement>){e.preventDefault();setSaving(true);const fd=new FormData(e.currentTarget);const body={sku:String(fd.get('sku')||''),nameAr:String(fd.get('nameAr')||''),nameEn:String(fd.get('nameEn')||''),descriptionAr:String(fd.get('descriptionAr')||''),imageUrl,basePrice:Number(fd.get('basePrice')||0),categoryId:String(fd.get('categoryId')||'')||undefined,isActive:fd.get('isActive')==='on'};const res=await fetch(selected?.id?`${API}/admin/catalog/products/${selected.id}`:`${API}/admin/catalog/products`,{method:selected?.id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});setSaving(false);if(!res.ok){setMessage('فشل حفظ المنتج.');return}setSelected(null);setImageUrl('');setMessage('تم حفظ المنتج وتحديث الكاتالوج.');await load()}
+ async function hide(id:string){if(!confirm('إخفاء المنتج من المنيو؟'))return;const r=await fetch(`${API}/admin/catalog/products/${id}`,{method:'DELETE'});if(r.ok)await load()}
+ async function addCategory(e:FormEvent<HTMLFormElement>){e.preventDefault();const fd=new FormData(e.currentTarget);const r=await fetch(`${API}/admin/catalog/categories`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nameAr:String(fd.get('nameAr')||''),nameEn:String(fd.get('nameEn')||''),isActive:true})});if(r.ok){e.currentTarget.reset();await load()}}
+ async function toggle(p:Product,b:Branch){const bp=p.branchProducts?.find(x=>x.branchId===b.id);if(!bp)return;await fetch(`${API}/admin/catalog/branches/${b.id}/products/${p.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({isAvailable:!bp.isAvailable})});await load()}
+ return <main className="ops">
+  <aside className="side"><div className="sideBrand"><b>LMTD</b><span>CONTROL</span></div><div className="storePicker"><small>Current store</small><strong>All UAE Branches</strong><span>Operations view</span></div><nav>{NAV.map(([id,label,sub])=><button key={id} className={tab===id?'on':''} onClick={()=>setTab(id)}><span>{label}</span><small>{sub}</small></button>)}</nav><div className="sideBottom"><span className="dot"/> System console</div></aside>
+  <section className="work"><header className="top"><div><small>LMTD COFFEE</small><strong>{NAV.find(x=>x[0]===tab)?.[1]}</strong></div><div className="topActions"><button onClick={load}>Refresh</button><button className="dark" onClick={()=>edit()}>+ New product</button></div></header>
+  <div className="page">{message&&<div className="notice">{message}</div>}
+   {tab==='dashboard'&&<><div className="heroAdmin"><div><p>Good morning</p><h1>Store operations at a glance.</h1><span>Orders, menu, branch availability and performance in one place.</span></div><button className="dark" onClick={()=>setTab('orders')}>Open live orders</button></div><div className="kpis"><article><span>Products</span><b>{products.length}</b><small>{active} active</small></article><article><span>Branches</span><b>{branches.length}</b><small>UAE network</small></article><article><span>Available slots</span><b>{available}</b><small>branch × product</small></article><article><span>Orders today</span><b>—</b><small>connect Orders API</small></article></div><div className="dashGrid"><div className="card"><div className="cardTitle"><h2>Live order board</h2><button onClick={()=>setTab('orders')}>View all</button></div><div className="emptyState"><b>No live order stream yet</b><span>This panel is ready for PENDING → ACCEPTED → PREPARING → READY.</span></div></div><div className="card"><div className="cardTitle"><h2>Quick controls</h2></div><div className="quickOps"><button onClick={()=>setTab('availability')}>Mark items sold out</button><button onClick={()=>setTab('products')}>Edit menu</button><button onClick={()=>setTab('branches')}>Branch settings</button><button onClick={()=>setTab('reports')}>Open reports</button></div></div></div></>}
+   {tab==='orders'&&<div className="card full"><div className="cardTitle"><div><h1>Live Orders</h1><p>Designed as the operational heart of LMTD.</p></div><div className="seg"><button className="active">New</button><button>Preparing</button><button>Ready</button></div></div><div className="orderColumns"><section><h3>NEW</h3><div className="emptyState">Waiting for Orders API</div></section><section><h3>PREPARING</h3><div className="emptyState">Accepted orders appear here</div></section><section><h3>READY</h3><div className="emptyState">Ready for pickup / vehicle</div></section></div></div>}
+   {tab==='products'&&<div className="catalogGrid"><div className="card"><div className="cardTitle"><div><h1>Menu & Products</h1><p>Images, prices, names, categories and visibility.</p></div><button className="dark" onClick={()=>edit()}>+ Add item</button></div><div className="searchRow"><input placeholder="Search products..."/><select><option>All categories</option>{categories.map(c=><option key={c.id}>{c.nameAr}</option>)}</select></div>{loading?<p>Loading…</p>:<div className="productList">{products.map(p=><article key={p.id}><div className="thumb">{p.imageUrl?<img src={p.imageUrl} alt=""/>:<span>IMG</span>}</div><div className="grow"><b>{p.nameEn||p.nameAr}</b><span>{p.category?.nameAr||'Uncategorized'} · AED {Number(p.basePrice).toFixed(2)}</span><small>{p.sku}</small></div><span className={p.isActive?'pill green':'pill'}>{p.isActive?'Active':'Hidden'}</span><button onClick={()=>edit(p)}>Edit</button><button onClick={()=>hide(p.id)}>Hide</button></article>)}</div>}</div><div className="card editor"><h2>{selected?.id?'Edit product':'New product'}</h2>{!selected?<div className="emptyState">Select an item to edit, or add a new product.</div>:<form onSubmit={saveProduct} className="form"><label>Product image<div className="uploadBox">{imageUrl?<img src={imageUrl} alt="preview"/>:<div><b>Upload product image</b><span>JPG, PNG or WEBP</span></div>}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>e.target.files?.[0]&&upload(e.target.files[0])}/></div>{uploading&&<small>Uploading…</small>}</label><div className="two"><label>Arabic name<input name="nameAr" required defaultValue={selected.nameAr||''}/></label><label>English name<input name="nameEn" defaultValue={selected.nameEn||''}/></label></div><div className="two"><label>SKU<input name="sku" required defaultValue={selected.sku||''}/></label><label>Price AED<input name="basePrice" type="number" step="0.01" required defaultValue={selected.basePrice||''}/></label></div><label>Category<select name="categoryId" defaultValue={selected.categoryId||selected.category?.id||''}><option value="">Uncategorized</option>{categories.map(c=><option key={c.id} value={c.id}>{c.nameAr}</option>)}</select></label><label>Description<textarea name="descriptionAr" rows={4} defaultValue={selected.descriptionAr||''}/></label><label className="check"><input type="checkbox" name="isActive" defaultChecked={selected.id?selected.isActive:true}/> Visible in customer menu</label><div className="formBtns"><button type="button" onClick={()=>setSelected(null)}>Cancel</button><button className="dark" disabled={saving}>{saving?'Saving…':'Save product'}</button></div></form>}</div></div>}
+   {tab==='categories'&&<div className="card full"><div className="cardTitle"><div><h1>Categories</h1><p>Control how the customer menu is grouped.</p></div></div><form className="inline" onSubmit={addCategory}><input name="nameAr" placeholder="Arabic category name" required/><input name="nameEn" placeholder="English category name"/><button className="dark">Add category</button></form><div className="tiles">{categories.map(c=><article key={c.id}><b>{c.nameAr}</b><span>{c.nameEn}</span><small>{c.isActive?'Active':'Hidden'}</small></article>)}</div></div>}
+   {tab==='availability'&&<div className="card full"><div className="cardTitle"><div><h1>Availability</h1><p>One-tap sold-out control per branch.</p></div></div>{branches.map(b=><div className="branchBlock" key={b.id}><h2>{b.nameEn||b.nameAr}</h2><div className="availGrid">{products.map(p=>{const bp=p.branchProducts?.find(x=>x.branchId===b.id);const on=bp?.isAvailable!==false;return <button key={p.id} disabled={!bp} className={on?'avail yes':'avail no'} onClick={()=>toggle(p,b)}><span>{p.nameEn||p.nameAr}</span><b>{on?'AVAILABLE':'SOLD OUT'}</b></button>})}</div></div>)}</div>}
+   {tab==='branches'&&<div className="card full"><div className="cardTitle"><div><h1>Branches</h1><p>Store status, accepting orders and prep-time controls.</p></div></div><div className="tiles branchTiles">{branches.map(b=><article key={b.id}><span className="pill green">{b.isActive?'Active':'Disabled'}</span><h2>{b.nameEn||b.nameAr}</h2><p>{b.acceptsOrders?'Accepting orders':'Orders paused'}</p><button>Edit branch</button></article>)}</div></div>}
+   {tab==='modifiers'&&<Placeholder title="Modifiers" text="Sizes, milk, extra shots and add-ons will be managed here and attached to individual products."/>}
+   {tab==='promotions'&&<Placeholder title="Promotions" text="Coupons, featured products, banners and scheduled campaigns."/>}
+   {tab==='customers'&&<Placeholder title="Customers" text="Customer profiles, order history, favourites and loyalty visibility."/>}
+   {tab==='reports'&&<Placeholder title="Reports" text="Daily, weekly and monthly sales, product mix and branch performance."/>}
+   {tab==='settings'&&<Placeholder title="Settings" text="Payments, notifications, POS / Telpo printer, users, roles and integrations."/>}
+  </div></section>
+ </main>
 }
+function Placeholder({title,text}:{title:string;text:string}){return <div className="card full"><div className="cardTitle"><div><h1>{title}</h1><p>{text}</p></div></div><div className="emptyState"><b>{title} workspace ready</b><span>The section is part of the admin structure and will connect to its backend module.</span></div></div>}
