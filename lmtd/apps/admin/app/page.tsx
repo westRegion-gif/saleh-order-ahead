@@ -1,0 +1,1 @@
+export default function AdminHome(){return <main><header><strong>LMTD</strong><span>Operations Console</span></header><section><h1>Branch Operations</h1><p>Incoming paid orders, preparation status, branch availability and catalog controls will be implemented here.</p></section></main>}

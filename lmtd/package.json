@@ -1,0 +1,12 @@
+{
+  "name": "lmtd-platform",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @lmtd/customer --filter @lmtd/admin --filter @lmtd/api dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}
