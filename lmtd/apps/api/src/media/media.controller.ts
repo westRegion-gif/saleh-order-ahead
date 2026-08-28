@@ -1,5 +1,6 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { IsIn, IsNotEmpty, IsString } from 'class-validator';
+import { AdminAuthGuard } from '../admin-auth/admin-auth.guard';
 import { MediaService } from './media.service';
 
 class PresignDto {
@@ -7,6 +8,7 @@ class PresignDto {
   @IsString() @IsIn(['image/jpeg','image/png','image/webp']) contentType!: string;
 }
 
+@UseGuards(AdminAuthGuard)
 @Controller('admin/media')
 export class MediaController {
   constructor(private readonly media:MediaService){}
