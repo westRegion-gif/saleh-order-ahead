@@ -1,7 +1,9 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { AdminAuthGuard } from '../admin-auth/admin-auth.guard';
 import { AdminCatalogService } from './admin-catalog.service';
 import { CreateCategoryDto, CreateProductDto, SetBranchProductDto, UpdateCategoryDto, UpdateProductDto } from './admin-catalog.dto';
 
+@UseGuards(AdminAuthGuard)
 @Controller('admin/catalog')
 export class AdminCatalogController {
   constructor(private readonly service: AdminCatalogService) {}
