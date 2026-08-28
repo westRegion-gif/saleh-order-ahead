@@ -30,136 +30,138 @@ model Branch {
   specialHours   BranchSpecialHour[]
   branchProducts BranchProduct[]
   branchModifiers BranchModifier[]
-
   @@map("branches")
 }
 
 model BranchHour {
-  id        String   @id @default(uuid()) @db.Uuid
-  branchId  String   @map("branch_id") @db.Uuid
-  dayOfWeek Int      @map("day_of_week")
-  opensAt   String?  @map("opens_at")
-  closesAt  String?  @map("closes_at")
-  isClosed  Boolean  @default(false) @map("is_closed")
-  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-
-  @@unique([branchId, dayOfWeek])
+  id String @id @default(uuid()) @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
+  dayOfWeek Int @map("day_of_week")
+  opensAt String? @map("opens_at")
+  closesAt String? @map("closes_at")
+  isClosed Boolean @default(false) @map("is_closed")
+  branch Branch @relation(fields:[branchId],references:[id],onDelete:Cascade)
+  @@unique([branchId,dayOfWeek])
   @@map("branch_hours")
 }
 
 model BranchSpecialHour {
-  id        String   @id @default(uuid()) @db.Uuid
-  branchId  String   @map("branch_id") @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
   localDate DateTime @map("local_date") @db.Date
-  opensAt   String?  @map("opens_at")
-  closesAt  String?  @map("closes_at")
-  isClosed  Boolean  @default(false) @map("is_closed")
-  note      String?
-  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-
-  @@unique([branchId, localDate])
+  opensAt String? @map("opens_at")
+  closesAt String? @map("closes_at")
+  isClosed Boolean @default(false) @map("is_closed")
+  note String?
+  branch Branch @relation(fields:[branchId],references:[id],onDelete:Cascade)
+  @@unique([branchId,localDate])
   @@map("branch_special_hours")
 }
 
 model Category {
-  id        String    @id @default(uuid()) @db.Uuid
-  nameAr    String    @map("name_ar")
-  nameEn    String?   @map("name_en")
-  imageUrl  String?   @map("image_url")
-  sortOrder Int       @default(0) @map("sort_order")
-  isActive  Boolean   @default(true) @map("is_active")
-  createdAt DateTime  @default(now()) @map("created_at")
-  products  Product[]
-
+  id String @id @default(uuid()) @db.Uuid
+  nameAr String @map("name_ar")
+  nameEn String? @map("name_en")
+  imageUrl String? @map("image_url")
+  sortOrder Int @default(0) @map("sort_order")
+  isActive Boolean @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  products Product[]
   @@map("categories")
 }
 
 model Product {
-  id             String          @id @default(uuid()) @db.Uuid
-  categoryId     String?         @map("category_id") @db.Uuid
-  sku            String          @unique
-  nameAr         String          @map("name_ar")
-  nameEn         String?         @map("name_en")
-  descriptionAr  String?         @map("description_ar")
-  descriptionEn  String?         @map("description_en")
-  imageUrl       String?         @map("image_url")
-  basePrice      Decimal         @map("base_price") @db.Decimal(12, 2)
-  isActive       Boolean         @default(true) @map("is_active")
-  sortOrder      Int             @default(0) @map("sort_order")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  category       Category?       @relation(fields: [categoryId], references: [id])
+  id String @id @default(uuid()) @db.Uuid
+  categoryId String? @map("category_id") @db.Uuid
+  sku String @unique
+  nameAr String @map("name_ar")
+  nameEn String? @map("name_en")
+  descriptionAr String? @map("description_ar")
+  descriptionEn String? @map("description_en")
+  imageUrl String? @map("image_url")
+  basePrice Decimal @map("base_price") @db.Decimal(12,2)
+  isActive Boolean @default(true) @map("is_active")
+  sortOrder Int @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  category Category? @relation(fields:[categoryId],references:[id])
   branchProducts BranchProduct[]
   modifierGroups ModifierGroup[]
-
   @@map("products")
 }
 
 model BranchProduct {
-  branchId     String   @map("branch_id") @db.Uuid
-  productId    String   @map("product_id") @db.Uuid
-  priceOverride Decimal? @map("price_override") @db.Decimal(12, 2)
-  isAvailable  Boolean  @default(true) @map("is_available")
+  branchId String @map("branch_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  priceOverride Decimal? @map("price_override") @db.Decimal(12,2)
+  isAvailable Boolean @default(true) @map("is_available")
   soldOutReason String? @map("sold_out_reason")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-  branch       Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  @@id([branchId, productId])
+  updatedAt DateTime @updatedAt @map("updated_at")
+  branch Branch @relation(fields:[branchId],references:[id],onDelete:Cascade)
+  product Product @relation(fields:[productId],references:[id],onDelete:Cascade)
+  @@id([branchId,productId])
   @@map("branch_products")
 }
 
 model ModifierGroup {
-  id            String     @id @default(uuid()) @db.Uuid
-  productId     String     @map("product_id") @db.Uuid
-  nameAr        String     @map("name_ar")
-  nameEn        String?    @map("name_en")
-  selectionType String     @map("selection_type")
-  minSelect     Int        @default(0) @map("min_select")
-  maxSelect     Int?       @map("max_select")
-  sortOrder     Int        @default(0) @map("sort_order")
-  isRequired    Boolean    @default(false) @map("is_required")
-  product       Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
-  modifiers     Modifier[]
-
+  id String @id @default(uuid()) @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  nameAr String @map("name_ar")
+  nameEn String? @map("name_en")
+  selectionType String @map("selection_type")
+  minSelect Int @default(0) @map("min_select")
+  maxSelect Int? @map("max_select")
+  sortOrder Int @default(0) @map("sort_order")
+  isRequired Boolean @default(false) @map("is_required")
+  product Product @relation(fields:[productId],references:[id],onDelete:Cascade)
+  modifiers Modifier[]
   @@map("modifier_groups")
 }
 
 model Modifier {
-  id               String           @id @default(uuid()) @db.Uuid
-  modifierGroupId  String           @map("modifier_group_id") @db.Uuid
-  nameAr           String           @map("name_ar")
-  nameEn           String?          @map("name_en")
-  priceDelta       Decimal          @default(0) @map("price_delta") @db.Decimal(12, 2)
-  isActive         Boolean          @default(true) @map("is_active")
-  sortOrder        Int              @default(0) @map("sort_order")
-  modifierGroup    ModifierGroup    @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
-  branchModifiers  BranchModifier[]
-
+  id String @id @default(uuid()) @db.Uuid
+  modifierGroupId String @map("modifier_group_id") @db.Uuid
+  nameAr String @map("name_ar")
+  nameEn String? @map("name_en")
+  priceDelta Decimal @default(0) @map("price_delta") @db.Decimal(12,2)
+  isActive Boolean @default(true) @map("is_active")
+  sortOrder Int @default(0) @map("sort_order")
+  modifierGroup ModifierGroup @relation(fields:[modifierGroupId],references:[id],onDelete:Cascade)
+  branchModifiers BranchModifier[]
   @@map("modifiers")
 }
 
 model BranchModifier {
-  branchId          String   @map("branch_id") @db.Uuid
-  modifierId        String   @map("modifier_id") @db.Uuid
-  priceDeltaOverride Decimal? @map("price_delta_override") @db.Decimal(12, 2)
-  isAvailable       Boolean  @default(true) @map("is_available")
-  branch            Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  modifier          Modifier @relation(fields: [modifierId], references: [id], onDelete: Cascade)
-
-  @@id([branchId, modifierId])
+  branchId String @map("branch_id") @db.Uuid
+  modifierId String @map("modifier_id") @db.Uuid
+  priceDeltaOverride Decimal? @map("price_delta_override") @db.Decimal(12,2)
+  isAvailable Boolean @default(true) @map("is_available")
+  branch Branch @relation(fields:[branchId],references:[id],onDelete:Cascade)
+  modifier Modifier @relation(fields:[modifierId],references:[id],onDelete:Cascade)
+  @@id([branchId,modifierId])
   @@map("branch_modifiers")
 }
 
 model Customer {
-  id                String   @id @default(uuid()) @db.Uuid
-  phone             String?  @unique
-  email             String?  @unique
-  fullName          String?  @map("full_name")
-  preferredLanguage String   @default("ar") @map("preferred_language")
-  isActive          Boolean  @default(true) @map("is_active")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
+  id String @id @default(uuid()) @db.Uuid
+  phone String? @unique
+  email String? @unique
+  fullName String? @map("full_name")
+  preferredLanguage String @default("ar") @map("preferred_language")
+  isActive Boolean @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
   @@map("customers")
+}
+
+model AdminUser {
+  id String @id @default(uuid()) @db.Uuid
+  username String @unique
+  passwordHash String @map("password_hash")
+  role String @default("OWNER")
+  isActive Boolean @default(true) @map("is_active")
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("admin_users")
 }
