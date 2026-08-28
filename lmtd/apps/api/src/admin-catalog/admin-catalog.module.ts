@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
+import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminCatalogController } from './admin-catalog.controller';
 import { AdminCatalogService } from './admin-catalog.service';
 
-@Module({ controllers: [AdminCatalogController], providers: [AdminCatalogService] })
+@Module({ imports:[AdminAuthModule], controllers: [AdminCatalogController], providers: [AdminCatalogService] })
 export class AdminCatalogModule {}
