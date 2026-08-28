@@ -1,0 +1,2 @@
+import Link from 'next/link';
+export default function Favorites(){return <main className="shell"><section className="screen screen-light"><header className="topbar"><Link href="/home" className="iconBtn">←</Link><span className="brand">المفضلة</span><span/></header><div className="screenBody"><h1>الطلبات المفضلة</h1><div className="choiceCard"><b>طلبي المعتاد</b><span>Spanish Latte Cold • 24 AED</span></div><Link className="primary darkPrimary" href="/cart">إضافة للسلة</Link><Link className="secondary lightSecondary" href="/menu">تصفح المنيو</Link></div></section></main>}

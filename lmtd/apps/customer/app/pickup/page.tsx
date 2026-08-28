@@ -1,0 +1,2 @@
+import Link from 'next/link';
+export default function Pickup(){return <main className="shell"><section className="screen screen-light"><header className="topbar"><Link href="/cart" className="iconBtn">←</Link><span className="brand">الاستلام</span><span/></header><div className="screenBody"><h1>كيف بتستلم؟</h1><Link className="choiceCard" href="/payment?pickup=walkin"><b>🚶 استلام من الكاونتر</b><span>ادخل الفرع واستلم طلبك</span></Link><Link className="choiceCard" href="/vehicle"><b>🚗 استلام من السيارة</b><span>أضف مركبتك وسنجهز الطلب لك</span></Link></div></section></main>}

@@ -1,0 +1,2 @@
+import Link from 'next/link';
+export default function Payment(){return <main className="shell"><section className="screen screen-light"><header className="topbar"><Link href="/pickup" className="iconBtn">←</Link><span className="brand">الدفع</span><span/></header><div className="screenBody"><h1>الدفع</h1><div className="summary"><span>الإجمالي</span><b>24 AED</b></div><div className="choiceCard"><b>💳 البطاقة</b><span>بوابة الدفع الفعلية تربط لاحقًا</span></div><Link className="primary darkPrimary" href="/tracking">تأكيد الطلب التجريبي</Link></div></section></main>}

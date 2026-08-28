@@ -1,0 +1,2 @@
+import Link from 'next/link';
+export default function Wallet(){return <main className="shell"><section className="screen screen-light"><header className="topbar"><Link href="/home" className="iconBtn">←</Link><span className="brand">المحفظة</span><span/></header><div className="screenBody"><h1>0.00 AED</h1><p className="muted">المحفظة وبرنامج الولاء جاهزان كواجهة، وسيتم تفعيلهما بعد ربط الـAPI.</p><Link className="primary darkPrimary" href="/home">العودة للرئيسية</Link></div></section></main>}
