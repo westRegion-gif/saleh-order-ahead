@@ -7,6 +7,58 @@ import { CreateOrderDto } from './dto/create-order.dto';
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async getPublic(id: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        pickupMethod: true,
+        currency: true,
+        subtotal: true,
+        discountTotal: true,
+        taxTotal: true,
+        total: true,
+        note: true,
+        createdAt: true,
+        branch: {
+          select: {
+            id: true,
+            code: true,
+            nameAr: true,
+            nameEn: true,
+            addressAr: true,
+            addressEn: true,
+            imageUrl: true,
+            prepTimeMin: true,
+            prepTimeMax: true,
+            acceptsOrders: true,
+            isOpenOverride: true,
+          },
+        },
+        items: {
+          select: {
+            id: true,
+            productId: true,
+            productName: true,
+            quantity: true,
+            unitPrice: true,
+            lineTotal: true,
+            modifiersJson: true,
+            note: true,
+          },
+        },
+        statusHistory: {
+          orderBy: { createdAt: 'asc' },
+          select: { id: true, status: true, note: true, createdAt: true },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    return order;
+  }
+
   async create(dto: CreateOrderDto) {
     const existing = await this.prisma.order.findFirst({ where: { idempotencyKey: dto.idempotencyKey }, include: { items: true } });
     if (existing) return existing;
