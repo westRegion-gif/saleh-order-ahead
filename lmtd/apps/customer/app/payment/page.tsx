@@ -1,18 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { AppScreen, Header } from '../_components';
 import { CreatedOrder, getOrder } from '../_api';
 
 export default function Payment() {
-  const search = useSearchParams();
   const [order, setOrder] = useState<CreatedOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
     let orderId = search.get('order') || '';
+
     if (!orderId) {
       try {
         const pending = JSON.parse(localStorage.getItem('lmtd_pending_order') || 'null') as { id?: string } | null;
@@ -32,7 +32,7 @@ export default function Payment() {
       .then(setOrder)
       .catch((err) => setError(err instanceof Error ? err.message : 'تعذر تحميل الطلب'))
       .finally(() => setLoading(false));
-  }, [search]);
+  }, []);
 
   const total = Number(order?.total || 0);
 
