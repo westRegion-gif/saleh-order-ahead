@@ -1,2 +1,19 @@
-import Link from'next/link';import{AppScreen,Header}from'../_components';
-export default function Verify(){return <AppScreen><Header title="التحقق" back="/login"/><div className="content authPage"><p className="kicker">OTP VERIFICATION</p><h1>أدخل الرمز</h1><p className="muted">أرسلنا رمزاً مكوناً من 6 أرقام إلى رقم هاتفك.</p><div className="otpRow"><input maxLength={1}/><input maxLength={1}/><input maxLength={1}/><input maxLength={1}/><input maxLength={1}/><input maxLength={1}/></div><Link className="blackCta" href="/home">تأكيد ومتابعة <span>←</span></Link><Link className="textLink" href="/login">إعادة إرسال الرمز</Link></div></AppScreen>}
+import Link from 'next/link';
+import { AppScreen, Header } from '../_components';
+
+export default function Verify() {
+  return (
+    <AppScreen>
+      <Header title="التحقق" back="/login" />
+      <div className="content authPage" dir="rtl">
+        <p className="kicker">OTP VERIFICATION</p>
+        <h1>رمز التحقق</h1>
+        <div className="emptyState">
+          <b>OTP غير مفعل بعد</b>
+          <span>سيتم تفعيل إدخال الرمز والتحقق منه فقط بعد ربط خدمة الرسائل وجلسات العميل في الباك إند.</span>
+        </div>
+        <Link className="outlineCta" href="/branches">المتابعة كضيف</Link>
+      </div>
+    </AppScreen>
+  );
+}
