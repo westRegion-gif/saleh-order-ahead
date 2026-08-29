@@ -50,6 +50,24 @@ export type CreateOrderInput = {
   vehicleColor?: string;
 };
 
+export type OrderItemSnapshot = {
+  id: string;
+  productId?: string | null;
+  productName: string;
+  quantity: number;
+  unitPrice: string | number;
+  lineTotal: string | number;
+  modifiersJson?: unknown;
+  note?: string | null;
+};
+
+export type OrderStatusSnapshot = {
+  id: string;
+  status: string;
+  note?: string | null;
+  createdAt: string;
+};
+
 export type CreatedOrder = {
   id: string;
   orderNumber: string;
@@ -60,7 +78,15 @@ export type CreatedOrder = {
   discountTotal: string | number;
   taxTotal: string | number;
   total: string | number;
+  note?: string | null;
+  vehiclePlate?: string | null;
+  vehicleEmirate?: string | null;
+  vehicleMakeModel?: string | null;
+  vehicleColor?: string | null;
+  createdAt?: string;
   branch: Branch;
+  items?: OrderItemSnapshot[];
+  statusHistory?: OrderStatusSnapshot[];
 };
 
 export async function getBranches(): Promise<Branch[]> {
@@ -85,6 +111,15 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
     const body = await res.json().catch(() => null);
     const message = Array.isArray(body?.message) ? body.message.join('، ') : body?.message;
     throw new Error(message || 'تعذر إنشاء الطلب');
+  }
+  return res.json();
+}
+
+export async function getOrder(orderId: string): Promise<CreatedOrder> {
+  const res = await fetch(`${API_URL}/orders/${encodeURIComponent(orderId)}`, { cache: 'no-store' });
+  if (!res.ok) {
+    if (res.status === 404) throw new Error('الطلب غير موجود');
+    throw new Error('تعذر تحميل الطلب');
   }
   return res.json();
 }
