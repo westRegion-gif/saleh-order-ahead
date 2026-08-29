@@ -11,11 +11,13 @@ export class AdminAuthService implements OnModuleInit {
     const username = process.env.ADMIN_BOOTSTRAP_USERNAME?.trim();
     const password = process.env.ADMIN_BOOTSTRAP_PASSWORD;
     if (!username || !password) return;
+
+    const existing = await this.prisma.adminUser.findUnique({ where: { username } });
+    if (existing) return;
+
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
-    await this.prisma.adminUser.upsert({
-      where: { username },
-      create: { username, passwordHash, role: 'OWNER', isActive: true },
-      update: { passwordHash, role: 'OWNER', isActive: true },
+    await this.prisma.adminUser.create({
+      data: { username, passwordHash, role: 'OWNER', isActive: true },
     });
   }
 
