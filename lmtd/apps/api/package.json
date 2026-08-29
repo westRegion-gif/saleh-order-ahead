@@ -5,7 +5,7 @@
     "dev":"nest start --watch",
     "build":"prisma generate && nest build",
     "start":"node dist/main.js",
-    "start:railway":"prisma db push && prisma db seed && node dist/main.js",
+    "start:railway":"prisma db push && node dist/main.js",
     "lint":"echo api-lint-pending",
     "typecheck":"tsc --noEmit",
     "test":"jest --passWithNoTests",
