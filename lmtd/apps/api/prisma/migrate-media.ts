@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 
 const prisma = new PrismaClient();
@@ -10,16 +10,17 @@ async function main() {
   const bucket = process.env.S3_BUCKET;
   const accessKeyId = process.env.S3_ACCESS_KEY_ID;
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
-  const publicBase = process.env.S3_PUBLIC_BASE_URL;
+  const mediaBase = process.env.MEDIA_PUBLIC_BASE_URL?.replace(/\/$/, '') ||
+    (process.env.API_PUBLIC_URL ? `${process.env.API_PUBLIC_URL.replace(/\/$/, '')}/v1/media` : '');
 
-  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey || !publicBase) {
-    throw new Error('S3 storage variables are required before running media migration');
+  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey || !mediaBase) {
+    throw new Error('S3 credentials and MEDIA_PUBLIC_BASE_URL or API_PUBLIC_URL are required before media migration');
   }
 
   const client = new S3Client({
     region,
     endpoint,
-    forcePathStyle: true,
+    forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
     credentials: { accessKeyId, secretAccessKey },
   });
 
@@ -28,6 +29,7 @@ async function main() {
     select: { id: true, sku: true, imageUrl: true },
   });
 
+  let migrated = 0;
   for (const product of products) {
     if (!product.imageUrl) continue;
     const response = await fetch(product.imageUrl);
@@ -38,19 +40,15 @@ async function main() {
     const key = `products/${product.sku.toLowerCase()}-${randomUUID()}.${ext}`;
     const bytes = Buffer.from(await response.arrayBuffer());
 
-    await client.send(new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Body: bytes,
-      ContentType: contentType,
-    }));
+    await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: contentType }));
 
-    const imageUrl = `${publicBase.replace(/\/$/, '')}/${key}`;
+    const imageUrl = `${mediaBase}/object/${encodeURIComponent(key)}`;
     await prisma.product.update({ where: { id: product.id }, data: { imageUrl } });
-    console.log(`Migrated ${product.sku} -> ${imageUrl}`);
+    migrated++;
+    console.log(`Migrated ${product.sku}`);
   }
 
-  console.log(`Media migration complete. ${products.length} product image(s) processed.`);
+  console.log(`Media migration complete. ${migrated} product image(s) migrated.`);
 }
 
 main()
