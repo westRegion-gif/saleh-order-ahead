@@ -22,6 +22,8 @@ export function readCart(): CartItem[] {
 
 export function writeCart(items: CartItem[]) {
   localStorage.setItem(CART_KEY, JSON.stringify(items));
+  localStorage.removeItem('lmtd_checkout_key');
+  localStorage.removeItem('lmtd_pending_order');
   window.dispatchEvent(new Event('lmtd-cart-change'));
 }
 
