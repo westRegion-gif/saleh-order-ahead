@@ -10,7 +10,7 @@ const categories = [
   { key: 'bowls', nameAr: 'أطباق صحية', nameEn: 'Healthy Bowls', sortOrder: 4 },
   { key: 'dessert', nameAr: 'حلويات', nameEn: 'Dessert', sortOrder: 5 },
   { key: 'juices', nameAr: 'عصائر طازجة', nameEn: 'Fresh Juices', sortOrder: 6 },
-];
+] as const;
 
 const products = [
   ['SPANISH-LATTE-COLD','سبانش لاتيه بارد','Spanish Latte Cold',30,'spanish-latte-cold.png','coffee','bar'],
@@ -46,67 +46,105 @@ const drinkGroups = [
 ] as const;
 
 async function main() {
-  const branches = [
-    { code:'BR001', nameAr:'LMTD - الفرع الرئيسي', nameEn:'LMTD - Main Branch', prepTimeMin:8, prepTimeMax:15 },
-    { code:'BR002', nameAr:'LMTD - الفرع الثاني', nameEn:'LMTD - Branch 2', prepTimeMin:10, prepTimeMax:18 },
-  ];
-  for (const data of branches) {
-    const branch = await prisma.branch.upsert({ where:{code:data.code}, update:data, create:data });
-    for (let day=0; day<7; day++) await prisma.branchHour.upsert({
-      where:{branchId_dayOfWeek:{branchId:branch.id,dayOfWeek:day}},
-      update:{opensAt:'07:00',closesAt:'23:00',isClosed:false},
-      create:{branchId:branch.id,dayOfWeek:day,opensAt:'07:00',closesAt:'23:00'}
-    });
-  }
+  const categoryIds: Record<string,string> = {};
 
-  const categoryIds:Record<string,string>={};
   for (const data of categories) {
-    const existing = await prisma.category.findFirst({ where:{nameEn:data.nameEn} });
-    const category = existing
-      ? await prisma.category.update({where:{id:existing.id},data:{nameAr:data.nameAr,sortOrder:data.sortOrder,isActive:true}})
-      : await prisma.category.create({data:{nameAr:data.nameAr,nameEn:data.nameEn,sortOrder:data.sortOrder,isActive:true}});
-    categoryIds[data.key]=category.id;
+    let category = await prisma.category.findFirst({ where: { nameEn: data.nameEn } });
+    if (!category) {
+      category = await prisma.category.create({
+        data: { nameAr: data.nameAr, nameEn: data.nameEn, sortOrder: data.sortOrder, isActive: true },
+      });
+    }
+    categoryIds[data.key] = category.id;
   }
 
-  const legacySeedCategories = ['Cold Coffee','Hot Coffee','Matcha','Specialty Coffee','Desserts'];
-  await prisma.category.updateMany({ where:{nameEn:{in:legacySeedCategories}}, data:{isActive:false} });
+  const activeBranches = await prisma.branch.findMany({ where: { isActive: true }, select: { id: true } });
+  let sortOrder = 1;
 
-  const allBranches = await prisma.branch.findMany({where:{isActive:true}});
-  let sortOrder=1;
   for (const [sku,nameAr,nameEn,price,image,category,station] of products) {
-    const product = await prisma.product.upsert({
-      where:{sku},
-      update:{categoryId:categoryIds[category],nameAr,nameEn,basePrice:price,imageUrl:IMG+image,sortOrder,isActive:true},
-      create:{sku,categoryId:categoryIds[category],nameAr,nameEn,basePrice:price,imageUrl:IMG+image,sortOrder,isActive:true},
-    });
-    sortOrder++;
+    let product = await prisma.product.findUnique({ where: { sku } });
+    if (!product) {
+      product = await prisma.product.create({
+        data: {
+          sku,
+          categoryId: categoryIds[category],
+          nameAr,
+          nameEn,
+          basePrice: price,
+          imageUrl: IMG + image,
+          sortOrder,
+          isActive: true,
+        },
+      });
+    }
+    sortOrder += 1;
 
-    for (const branch of allBranches) await prisma.branchProduct.upsert({
-      where:{branchId_productId:{branchId:branch.id,productId:product.id}},
-      update:{isAvailable:true}, create:{branchId:branch.id,productId:product.id,isAvailable:true}
-    });
+    for (const branch of activeBranches) {
+      const existingBranchProduct = await prisma.branchProduct.findUnique({
+        where: { branchId_productId: { branchId: branch.id, productId: product.id } },
+      });
+      if (!existingBranchProduct) {
+        await prisma.branchProduct.create({
+          data: { branchId: branch.id, productId: product.id, isAvailable: true },
+        });
+      }
+    }
 
-    if (station==='bar') {
-      for (const groupData of drinkGroups) {
-        let group = await prisma.modifierGroup.findFirst({where:{productId:product.id,nameEn:groupData.nameEn}});
-        group = group
-          ? await prisma.modifierGroup.update({where:{id:group.id},data:{nameAr:groupData.nameAr,selectionType:'single',isRequired:true,minSelect:1,maxSelect:1,sortOrder:groupData.sortOrder}})
-          : await prisma.modifierGroup.create({data:{productId:product.id,nameAr:groupData.nameAr,nameEn:groupData.nameEn,selectionType:'single',isRequired:true,minSelect:1,maxSelect:1,sortOrder:groupData.sortOrder}});
-        let optionOrder=1;
-        for (const [optAr,optEn,delta] of groupData.options) {
-          const existing = await prisma.modifier.findFirst({where:{modifierGroupId:group.id,nameEn:optEn}});
-          const modifier = existing
-            ? await prisma.modifier.update({where:{id:existing.id},data:{nameAr:optAr,priceDelta:delta,isActive:true,sortOrder:optionOrder}})
-            : await prisma.modifier.create({data:{modifierGroupId:group.id,nameAr:optAr,nameEn:optEn,priceDelta:delta,isActive:true,sortOrder:optionOrder}});
-          optionOrder++;
-          for (const branch of allBranches) await prisma.branchModifier.upsert({
-            where:{branchId_modifierId:{branchId:branch.id,modifierId:modifier.id}},
-            update:{isAvailable:true},create:{branchId:branch.id,modifierId:modifier.id,isAvailable:true}
+    if (station !== 'bar') continue;
+
+    for (const groupData of drinkGroups) {
+      let group = await prisma.modifierGroup.findFirst({
+        where: { productId: product.id, nameEn: groupData.nameEn },
+      });
+      if (!group) {
+        group = await prisma.modifierGroup.create({
+          data: {
+            productId: product.id,
+            nameAr: groupData.nameAr,
+            nameEn: groupData.nameEn,
+            selectionType: 'SINGLE',
+            isRequired: true,
+            minSelect: 1,
+            maxSelect: 1,
+            sortOrder: groupData.sortOrder,
+          },
+        });
+      }
+
+      let optionOrder = 1;
+      for (const [optAr,optEn,delta] of groupData.options) {
+        let modifier = await prisma.modifier.findFirst({
+          where: { modifierGroupId: group.id, nameEn: optEn },
+        });
+        if (!modifier) {
+          modifier = await prisma.modifier.create({
+            data: {
+              modifierGroupId: group.id,
+              nameAr: optAr,
+              nameEn: optEn,
+              priceDelta: delta,
+              isActive: true,
+              sortOrder: optionOrder,
+            },
           });
+        }
+        optionOrder += 1;
+
+        for (const branch of activeBranches) {
+          const existingBranchModifier = await prisma.branchModifier.findUnique({
+            where: { branchId_modifierId: { branchId: branch.id, modifierId: modifier.id } },
+          });
+          if (!existingBranchModifier) {
+            await prisma.branchModifier.create({
+              data: { branchId: branch.id, modifierId: modifier.id, isAvailable: true },
+            });
+          }
         }
       }
     }
   }
 }
 
-main().catch((error)=>{console.error(error);process.exitCode=1}).finally(async()=>prisma.$disconnect());
+main()
+  .catch((error) => { console.error(error); process.exitCode = 1; })
+  .finally(async () => prisma.$disconnect());
