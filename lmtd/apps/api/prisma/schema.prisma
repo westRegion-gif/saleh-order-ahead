@@ -197,7 +197,7 @@ model AppSetting {
 model Order {
   id String @id @default(uuid()) @db.Uuid
   orderNumber String @unique @map("order_number")
-  idempotencyKey String? @unique @map("idempotency_key")
+  idempotencyKey String? @map("idempotency_key")
   customerId String? @map("customer_id") @db.Uuid
   branchId String @map("branch_id") @db.Uuid
   status String @default("PAYMENT_PENDING")
@@ -219,6 +219,7 @@ model Order {
   items OrderItem[]
   statusHistory OrderStatusHistory[]
   outboxEvents OutboxEvent[]
+  @@index([idempotencyKey])
   @@index([createdAt])
   @@index([status])
   @@map("orders")
