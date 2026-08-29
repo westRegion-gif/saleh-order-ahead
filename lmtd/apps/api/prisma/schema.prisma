@@ -26,11 +26,11 @@ model Branch {
   acceptsOrders  Boolean          @default(true) @map("accepts_orders")
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
-  hours          BranchHour[]
-  specialHours   BranchSpecialHour[]
-  branchProducts BranchProduct[]
+  hours           BranchHour[]
+  specialHours    BranchSpecialHour[]
+  branchProducts  BranchProduct[]
   branchModifiers BranchModifier[]
-  orders         Order[]
+  orders          Order[]
   @@map("branches")
 }
 
@@ -197,18 +197,28 @@ model AppSetting {
 model Order {
   id String @id @default(uuid()) @db.Uuid
   orderNumber String @unique @map("order_number")
+  idempotencyKey String? @unique @map("idempotency_key")
   customerId String? @map("customer_id") @db.Uuid
   branchId String @map("branch_id") @db.Uuid
-  status String @default("PENDING")
+  status String @default("PAYMENT_PENDING")
   pickupMethod String @default("WALK_IN") @map("pickup_method")
+  currency String @default("AED")
   subtotal Decimal @db.Decimal(12,2)
   discountTotal Decimal @default(0) @map("discount_total") @db.Decimal(12,2)
+  taxTotal Decimal @default(0) @map("tax_total") @db.Decimal(12,2)
   total Decimal @db.Decimal(12,2)
+  note String?
+  vehiclePlate String? @map("vehicle_plate")
+  vehicleEmirate String? @map("vehicle_emirate")
+  vehicleMakeModel String? @map("vehicle_make_model")
+  vehicleColor String? @map("vehicle_color")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
   customer Customer? @relation(fields:[customerId],references:[id])
   branch Branch @relation(fields:[branchId],references:[id])
   items OrderItem[]
+  statusHistory OrderStatusHistory[]
+  outboxEvents OutboxEvent[]
   @@index([createdAt])
   @@index([status])
   @@map("orders")
@@ -222,7 +232,32 @@ model OrderItem {
   quantity Int @default(1)
   unitPrice Decimal @map("unit_price") @db.Decimal(12,2)
   lineTotal Decimal @map("line_total") @db.Decimal(12,2)
+  modifiersJson Json? @map("modifiers_json")
+  note String?
   order Order @relation(fields:[orderId],references:[id],onDelete:Cascade)
   product Product? @relation(fields:[productId],references:[id])
   @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  status String
+  note String?
+  createdAt DateTime @default(now()) @map("created_at")
+  order Order @relation(fields:[orderId],references:[id],onDelete:Cascade)
+  @@index([orderId, createdAt])
+  @@map("order_status_history")
+}
+
+model OutboxEvent {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String? @map("order_id") @db.Uuid
+  eventType String @map("event_type")
+  payload Json
+  processedAt DateTime? @map("processed_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  order Order? @relation(fields:[orderId],references:[id],onDelete:Cascade)
+  @@index([processedAt, createdAt])
+  @@map("outbox_events")
 }
