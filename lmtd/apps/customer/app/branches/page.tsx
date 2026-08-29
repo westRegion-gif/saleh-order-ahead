@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { Branch, getBranches } from '../_api';
+import { readCart, writeCart } from '../_cart';
 
 function branchStatus(branch: Branch) {
   if (!branch.acceptsOrders) return 'الطلبات متوقفة';
@@ -35,6 +36,8 @@ export default function BranchesPage() {
 
   function chooseBranch(branch: Branch) {
     if (!canOrder(branch)) return;
+    const cart = readCart();
+    if (cart.length > 0 && cart.some((item) => item.branchId !== branch.id)) writeCart([]);
     localStorage.setItem('lmtd_branch_id', branch.id);
     localStorage.setItem('lmtd_branch_name', branch.nameAr || branch.nameEn || 'LMTD Coffee');
   }
