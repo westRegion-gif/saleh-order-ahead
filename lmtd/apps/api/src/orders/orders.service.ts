@@ -59,8 +59,15 @@ export class OrdersService {
     return order;
   }
 
+  private async findExisting(idempotencyKey: string) {
+    return this.prisma.order.findFirst({
+      where: { idempotencyKey },
+      include: { items: true, branch: true, statusHistory: true },
+    });
+  }
+
   async create(dto: CreateOrderDto) {
-    const existing = await this.prisma.order.findFirst({ where: { idempotencyKey: dto.idempotencyKey }, include: { items: true } });
+    const existing = await this.findExisting(dto.idempotencyKey);
     if (existing) return existing;
 
     const branch = await this.prisma.branch.findFirst({ where: { id: dto.branchId, isActive: true } });
@@ -100,12 +107,12 @@ export class OrdersService {
       if (!row || !row.product.isActive) throw new BadRequestException('Product is unavailable');
       if (!row.isAvailable) throw new BadRequestException(`${row.product.nameAr} is sold out`);
 
-      const selectedIds = requested.modifiers.map((m) => m.modifierId);
+      const selectedIds = requested.modifiers.map((modifier) => modifier.modifierId);
       const snapshots: Array<{ groupId: string; groupName: string; modifierId: string; modifierName: string; priceDelta: number }> = [];
       let modifierTotal = 0;
 
       for (const group of row.product.modifierGroups) {
-        const groupSelected = group.modifiers.filter((m) => selectedIds.includes(m.id));
+        const groupSelected = group.modifiers.filter((modifier) => selectedIds.includes(modifier.id));
         const count = groupSelected.length;
         if (count < group.minSelect || (group.isRequired && count === 0)) throw new BadRequestException(`Required modifier missing: ${group.nameAr}`);
         if (group.maxSelect != null && count > group.maxSelect) throw new BadRequestException(`Too many modifiers selected: ${group.nameAr}`);
@@ -120,7 +127,7 @@ export class OrdersService {
         }
       }
 
-      const validModifierIds = row.product.modifierGroups.flatMap((g) => g.modifiers.map((m) => m.id));
+      const validModifierIds = row.product.modifierGroups.flatMap((group) => group.modifiers.map((modifier) => modifier.id));
       if (selectedIds.some((id) => !validModifierIds.includes(id))) throw new BadRequestException('Invalid modifier selection');
 
       const basePrice = Number(row.priceOverride ?? row.product.basePrice);
@@ -143,37 +150,50 @@ export class OrdersService {
     const total = subtotal - discountTotal + taxTotal;
     const orderNumber = `LMTD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
-    return this.prisma.$transaction(async (tx) => {
-      const order = await tx.order.create({
-        data: {
-          orderNumber,
-          idempotencyKey: dto.idempotencyKey,
-          branchId: dto.branchId,
-          status: 'PAYMENT_PENDING',
-          pickupMethod: dto.pickupMethod,
-          currency: 'AED',
-          subtotal,
-          discountTotal,
-          taxTotal,
-          total,
-          note: dto.note?.trim() || null,
-          vehiclePlate: dto.pickupMethod === 'VEHICLE' ? dto.vehiclePlate?.trim() || null : null,
-          vehicleEmirate: dto.pickupMethod === 'VEHICLE' ? dto.vehicleEmirate?.trim() || null : null,
-          vehicleMakeModel: dto.pickupMethod === 'VEHICLE' ? dto.vehicleMakeModel?.trim() || null : null,
-          vehicleColor: dto.pickupMethod === 'VEHICLE' ? dto.vehicleColor?.trim() || null : null,
-          items: { create: pricedItems },
-          statusHistory: { create: { status: 'PAYMENT_PENDING', note: 'Order created and awaiting payment' } },
-        },
-        include: { items: true, branch: true, statusHistory: true },
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.orderIdempotency.create({ data: { key: dto.idempotencyKey } });
+
+        const order = await tx.order.create({
+          data: {
+            orderNumber,
+            idempotencyKey: dto.idempotencyKey,
+            branchId: dto.branchId,
+            status: 'PAYMENT_PENDING',
+            pickupMethod: dto.pickupMethod,
+            currency: 'AED',
+            subtotal,
+            discountTotal,
+            taxTotal,
+            total,
+            note: dto.note?.trim() || null,
+            vehiclePlate: dto.pickupMethod === 'VEHICLE' ? dto.vehiclePlate?.trim() || null : null,
+            vehicleEmirate: dto.pickupMethod === 'VEHICLE' ? dto.vehicleEmirate?.trim() || null : null,
+            vehicleMakeModel: dto.pickupMethod === 'VEHICLE' ? dto.vehicleMakeModel?.trim() || null : null,
+            vehicleColor: dto.pickupMethod === 'VEHICLE' ? dto.vehicleColor?.trim() || null : null,
+            items: { create: pricedItems },
+            statusHistory: { create: { status: 'PAYMENT_PENDING', note: 'Order created and awaiting payment' } },
+          },
+          include: { items: true, branch: true, statusHistory: true },
+        });
+
+        await tx.orderIdempotency.update({ where: { key: dto.idempotencyKey }, data: { orderId: order.id } });
+        await tx.outboxEvent.create({
+          data: {
+            orderId: order.id,
+            eventType: 'ORDER_CREATED',
+            payload: { orderId: order.id, orderNumber: order.orderNumber, status: order.status },
+          },
+        });
+        return order;
       });
-      await tx.outboxEvent.create({
-        data: {
-          orderId: order.id,
-          eventType: 'ORDER_CREATED',
-          payload: { orderId: order.id, orderNumber: order.orderNumber, status: order.status },
-        },
-      });
-      return order;
-    });
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code || '') : '';
+      if (code === 'P2002') {
+        const duplicate = await this.findExisting(dto.idempotencyKey);
+        if (duplicate) return duplicate;
+      }
+      throw error;
+    }
   }
 }
