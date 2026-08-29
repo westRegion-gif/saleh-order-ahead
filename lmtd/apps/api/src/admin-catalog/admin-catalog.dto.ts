@@ -2,7 +2,7 @@ import { Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 
 export class CreateProductDto {
-  @IsString() sku!: string;
+  @IsOptional() @IsString() sku?: string;
   @IsString() nameAr!: string;
   @IsOptional() @IsString() nameEn?: string;
   @IsOptional() @IsString() descriptionAr?: string;
