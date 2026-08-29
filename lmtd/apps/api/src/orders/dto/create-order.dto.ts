@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import { ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class CreateOrderModifierDto {
   @IsUUID()
@@ -15,6 +15,7 @@ export class CreateOrderItemDto {
   quantity!: number;
 
   @IsArray()
+  @ValidateNested({ each: true })
   @Type(() => CreateOrderModifierDto)
   modifiers!: CreateOrderModifierDto[];
 
@@ -37,6 +38,7 @@ export class CreateOrderDto {
 
   @IsArray()
   @ArrayMinSize(1)
+  @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items!: CreateOrderItemDto[];
 
