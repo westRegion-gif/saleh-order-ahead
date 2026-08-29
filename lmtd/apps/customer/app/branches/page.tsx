@@ -10,6 +10,10 @@ function branchStatus(branch: Branch) {
   return 'متاح للطلب';
 }
 
+function canOrder(branch: Branch) {
+  return branch.acceptsOrders && branch.isOpenOverride !== false;
+}
+
 export default function BranchesPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [query, setQuery] = useState('');
@@ -30,6 +34,7 @@ export default function BranchesPage() {
   }, [branches, query]);
 
   function chooseBranch(branch: Branch) {
+    if (!canOrder(branch)) return;
     localStorage.setItem('lmtd_branch_id', branch.id);
     localStorage.setItem('lmtd_branch_name', branch.nameAr || branch.nameEn || 'LMTD Coffee');
   }
@@ -65,28 +70,35 @@ export default function BranchesPage() {
           {error && <p className="muted">{error}</p>}
 
           <div className="approvedBranchList">
-            {filtered.map((branch) => (
-              <article className="approvedBranchCard" key={branch.id}>
-                {branch.imageUrl ? (
-                  <div className="branchImageWrap">
-                    <img src={branch.imageUrl} alt={branch.nameAr || branch.nameEn || 'LMTD Coffee'} />
-                    <span className="openBadge">{branchStatus(branch)}</span>
+            {filtered.map((branch) => {
+              const available = canOrder(branch);
+              return (
+                <article className="approvedBranchCard" key={branch.id}>
+                  {branch.imageUrl ? (
+                    <div className="branchImageWrap">
+                      <img src={branch.imageUrl} alt={branch.nameAr || branch.nameEn || 'LMTD Coffee'} />
+                      <span className="openBadge">{branchStatus(branch)}</span>
+                    </div>
+                  ) : null}
+                  <div className="branchCardBody">
+                    <div>
+                      <span className="branchCity">{branch.code}</span>
+                      <h2>{branch.nameAr || branch.nameEn}</h2>
+                      {(branch.addressAr || branch.addressEn) && <p className="muted">{branch.addressAr || branch.addressEn}</p>}
+                    </div>
+                    <div className="branchMetaRow">
+                      <span>{branchStatus(branch)}</span>
+                      <span>التجهيز {branch.prepTimeMin}–{branch.prepTimeMax} دقيقة</span>
+                    </div>
+                    {available ? (
+                      <Link onClick={() => chooseBranch(branch)} className="branchContinue" href={`/menu?branch=${branch.id}`}>اختيار هذا الفرع</Link>
+                    ) : (
+                      <span className="branchContinue" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: 'none' }}>غير متاح للطلب حالياً</span>
+                    )}
                   </div>
-                ) : null}
-                <div className="branchCardBody">
-                  <div>
-                    <span className="branchCity">{branch.code}</span>
-                    <h2>{branch.nameAr || branch.nameEn}</h2>
-                    {(branch.addressAr || branch.addressEn) && <p className="muted">{branch.addressAr || branch.addressEn}</p>}
-                  </div>
-                  <div className="branchMetaRow">
-                    <span>{branchStatus(branch)}</span>
-                    <span>التجهيز {branch.prepTimeMin}–{branch.prepTimeMax} دقيقة</span>
-                  </div>
-                  <Link onClick={() => chooseBranch(branch)} className="branchContinue" href={`/menu?branch=${branch.id}`}>اختيار هذا الفرع</Link>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
 
           {!loading && !error && filtered.length === 0 && <p className="muted">لا توجد فروع مطابقة للبحث.</p>}
