@@ -1,2 +1,103 @@
-import Link from'next/link';import{AppScreen,Header}from'../_components';
-export default function Tracking(){return <AppScreen><Header title="طلبك" back="/home"/><div className="content trackingPage"><p className="kicker">ORDER #LMTD-001</p><h1>جاري تجهيز طلبك</h1><p className="eta">جاهز تقريباً خلال <b>12 دقيقة</b></p><div className="progressLine"><i className="done"/><i className="done"/><i className="active"/><i/></div><div className="statusList"><div className="doneStatus"><b>تم استلام الطلب</b><span>1:42 AM</span></div><div className="doneStatus"><b>تم قبول الطلب</b><span>1:43 AM</span></div><div className="activeStatus"><b>جاري التحضير</b><span>الباريستا يجهز طلبك الآن</span></div><div><b>جاهز للاستلام</b><span>سنرسل لك إشعاراً فور جهوزيته</span></div></div><div className="pickupInfo"><b>LMTD Coffee — Dubai</b><span>Spanish Latte Cold · 1</span></div><Link className="outlineCta" href="/orders">عرض كل الطلبات</Link><Link className="textLink" href="/home">العودة للرئيسية</Link></div></AppScreen>}
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { AppScreen, Header } from '../_components';
+import { CreatedOrder, getOrder } from '../_api';
+
+const FLOW = ['PAYMENT_PENDING', 'PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'COLLECTED', 'COMPLETED'];
+
+function label(status: string) {
+  const labels: Record<string, string> = {
+    PAYMENT_PENDING: 'بانتظار الدفع',
+    PENDING: 'تم استلام الطلب',
+    ACCEPTED: 'تم قبول الطلب',
+    PREPARING: 'جاري التحضير',
+    READY: 'جاهز للاستلام',
+    CUSTOMER_ARRIVED: 'تم تسجيل وصولك',
+    COLLECTED: 'تم الاستلام',
+    COMPLETED: 'اكتمل الطلب',
+    REJECTED: 'تم رفض الطلب',
+    CANCELLED: 'تم إلغاء الطلب',
+    PAYMENT_FAILED: 'فشل الدفع',
+    REFUNDED: 'تم استرجاع المبلغ',
+  };
+  return labels[status] || status;
+}
+
+export default function Tracking() {
+  const search = useSearchParams();
+  const [order, setOrder] = useState<CreatedOrder | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let orderId = search.get('order') || '';
+    if (!orderId) {
+      try {
+        const pending = JSON.parse(localStorage.getItem('lmtd_pending_order') || 'null') as { id?: string } | null;
+        orderId = pending?.id || '';
+      } catch {
+        orderId = '';
+      }
+    }
+
+    if (!orderId) {
+      setError('لا يوجد طلب للتتبع.');
+      setLoading(false);
+      return;
+    }
+
+    getOrder(orderId)
+      .then(setOrder)
+      .catch((err) => setError(err instanceof Error ? err.message : 'تعذر تحميل الطلب'))
+      .finally(() => setLoading(false));
+  }, [search]);
+
+  const currentIndex = useMemo(() => order ? FLOW.indexOf(order.status) : -1, [order]);
+  const history = order?.statusHistory || [];
+
+  return (
+    <AppScreen>
+      <Header title="طلبك" back="/orders" />
+      <div className="content trackingPage" dir="rtl">
+        {loading && <p className="muted">جاري تحميل حالة الطلب...</p>}
+        {error && <div className="emptyState"><b>{error}</b></div>}
+        {order && (
+          <>
+            <p className="kicker">ORDER #{order.orderNumber}</p>
+            <h1>{label(order.status)}</h1>
+            <p className="eta">الحالة المعروضة مأخوذة مباشرة من السيرفر.</p>
+
+            {currentIndex >= 0 && (
+              <div className="progressLine">
+                {[0, 1, 2, 3].map((step) => {
+                  const scaledIndex = Math.floor((currentIndex / Math.max(1, FLOW.length - 1)) * 3);
+                  return <i key={step} className={step < scaledIndex ? 'done' : step === scaledIndex ? 'active' : ''} />;
+                })}
+              </div>
+            )}
+
+            <div className="statusList">
+              {history.length > 0 ? history.map((entry, index) => (
+                <div key={entry.id} className={index === history.length - 1 ? 'activeStatus' : 'doneStatus'}>
+                  <b>{label(entry.status)}</b>
+                  <span>{new Date(entry.createdAt).toLocaleString('ar-AE')}</span>
+                </div>
+              )) : <div className="activeStatus"><b>{label(order.status)}</b></div>}
+            </div>
+
+            <div className="pickupInfo">
+              <b>{order.branch?.nameAr || order.branch?.nameEn || 'LMTD Coffee'}</b>
+              <span>{order.items?.map((item) => `${item.productName} · ${item.quantity}`).join('، ') || 'تفاصيل الطلب محفوظة في السيرفر'}</span>
+            </div>
+
+            <Link className="outlineCta" href="/orders">عرض الطلبات</Link>
+            <Link className="textLink" href="/home">العودة للرئيسية</Link>
+          </>
+        )}
+      </div>
+    </AppScreen>
+  );
+}
