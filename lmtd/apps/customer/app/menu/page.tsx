@@ -2,10 +2,12 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppScreen, BottomNav, Header } from '../_components';
-import { getBranches, getMenu, MenuProduct } from '../_api';
+import { getMenu, MenuProduct } from '../_api';
 
 export default function Menu() {
+  const router = useRouter();
   const [branchId, setBranchId] = useState('');
   const [branchName, setBranchName] = useState('LMTD Coffee');
   const [products, setProducts] = useState<MenuProduct[]>([]);
@@ -17,37 +19,35 @@ export default function Menu() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const selected = params.get('branch') || localStorage.getItem('lmtd_branch_id') || '';
+    const requestedCategory = params.get('category');
 
-    async function load() {
-      try {
-        let id = selected;
-        if (!id) {
-          const branches = await getBranches();
-          if (!branches.length) throw new Error('No branches');
-          id = branches[0].id;
-          localStorage.setItem('lmtd_branch_id', id);
-          localStorage.setItem('lmtd_branch_name', branches[0].nameAr || branches[0].nameEn || 'LMTD Coffee');
-        }
-        setBranchId(id);
-        const data = await getMenu(id);
-        setBranchName(data.branch.nameAr || data.branch.nameEn || 'LMTD Coffee');
-        setProducts(data.products);
-        localStorage.setItem('lmtd_branch_id', id);
-        localStorage.setItem('lmtd_branch_name', data.branch.nameAr || data.branch.nameEn || 'LMTD Coffee');
-      } catch {
-        setError('تعذر تحميل المنيو حالياً. حاول مرة أخرى.');
-      } finally {
-        setLoading(false);
-      }
+    if (!selected) {
+      router.replace('/branches');
+      return;
     }
 
-    load();
-  }, []);
+    setBranchId(selected);
+    getMenu(selected)
+      .then((data) => {
+        const name = data.branch.nameAr || data.branch.nameEn || 'LMTD Coffee';
+        setBranchName(name);
+        setProducts(data.products);
+        localStorage.setItem('lmtd_branch_id', selected);
+        localStorage.setItem('lmtd_branch_name', name);
+        if (requestedCategory) setCategory(requestedCategory);
+      })
+      .catch(() => setError('تعذر تحميل المنيو حالياً. حاول مرة أخرى.'))
+      .finally(() => setLoading(false));
+  }, [router]);
 
   const categories = useMemo(() => {
     const values = products.map((p) => p.category?.nameAr || p.category?.nameEn).filter(Boolean) as string[];
     return ['الكل', ...Array.from(new Set(values))];
   }, [products]);
+
+  useEffect(() => {
+    if (category !== 'الكل' && categories.length > 1 && !categories.includes(category)) setCategory('الكل');
+  }, [categories, category]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -81,18 +81,26 @@ export default function Menu() {
         {error && <p>{error}</p>}
 
         <div className="productList">
-          {filtered.map((product) => (
-            <Link href={`/product/${product.id}?branch=${branchId}`} className={`menuProduct ${product.isAvailable ? '' : 'soldOut'}`} key={product.id}>
-              {product.imageUrl ? <img src={product.imageUrl} alt={product.nameAr || product.nameEn || 'منتج'} /> : <div className="productImagePlaceholder" />}
-              <div className="productCopy">
-                <small>{product.category?.nameAr || product.category?.nameEn || ''}</small>
-                <b>{product.nameAr || product.nameEn}</b>
-                <span>AED {product.price.toFixed(2)}</span>
-                {!product.isAvailable && <small>غير متوفر حالياً</small>}
-              </div>
-              <span className="plusCircle">{product.isAvailable ? '+' : '—'}</span>
-            </Link>
-          ))}
+          {filtered.map((product) => {
+            const body = (
+              <>
+                {product.imageUrl ? <img src={product.imageUrl} alt={product.nameAr || product.nameEn || 'منتج'} /> : <div className="productImagePlaceholder" />}
+                <div className="productCopy">
+                  <small>{product.category?.nameAr || product.category?.nameEn || ''}</small>
+                  <b>{product.nameAr || product.nameEn}</b>
+                  <span>AED {product.price.toFixed(2)}</span>
+                  {!product.isAvailable && <small>غير متوفر حالياً</small>}
+                </div>
+                <span className="plusCircle">{product.isAvailable ? '+' : '—'}</span>
+              </>
+            );
+
+            return product.isAvailable ? (
+              <Link href={`/product/${product.id}?branch=${branchId}`} className="menuProduct" key={product.id}>{body}</Link>
+            ) : (
+              <div className="menuProduct soldOut" aria-disabled="true" key={product.id}>{body}</div>
+            );
+          })}
         </div>
 
         {!loading && !error && filtered.length === 0 && <p>لا توجد منتجات مطابقة.</p>}
