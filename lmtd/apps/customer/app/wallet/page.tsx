@@ -1,2 +1,18 @@
-import Link from'next/link';import{AppScreen,Header}from'../_components';
-export default function Wallet(){return <AppScreen><Header title="المحفظة" back="/profile"/><div className="content"><div className="walletCard"><p>LMTD BALANCE</p><h1>AED 0.00</h1><span>رصيدك المتاح</span></div><div className="pointsCard"><div><span>النقاط</span><b>0</b></div><div><span>المكافأة القادمة</span><b>—</b></div></div><h3>النشاط</h3><div className="emptyState"><b>ما عندك عمليات حتى الآن</b><span>ستظهر هنا عمليات الرصيد والمكافآت.</span></div><Link className="outlineCta" href="/menu">ابدأ طلب جديد</Link></div></AppScreen>}
+import Link from 'next/link';
+import { AppScreen, Header } from '../_components';
+
+export default function Wallet() {
+  return (
+    <AppScreen>
+      <Header title="المحفظة" back="/profile" />
+      <div className="content" dir="rtl">
+        <h1>المحفظة والمكافآت</h1>
+        <div className="emptyState">
+          <b>المحفظة غير مفعلة بعد</b>
+          <span>لن نعرض رصيداً أو نقاطاً تجريبية. سيتم ربط الرصيد والمكافآت بسجل حقيقي في السيرفر عند تفعيل هذه الميزة.</span>
+        </div>
+        <Link className="outlineCta" href="/menu">ابدأ طلباً جديداً</Link>
+      </div>
+    </AppScreen>
+  );
+}
