@@ -23,9 +23,10 @@ export class AdminCatalogService {
 
   async createProduct(dto: CreateProductDto) {
     const branches = await this.prisma.branch.findMany({ where: { isActive: true }, select: { id: true } });
+    const sku = dto.sku?.trim() || await this.generateUniqueSku(dto.nameEn || dto.nameAr);
     return this.prisma.product.create({
       data: {
-        sku: dto.sku, nameAr: dto.nameAr, nameEn: dto.nameEn, descriptionAr: dto.descriptionAr,
+        sku, nameAr: dto.nameAr, nameEn: dto.nameEn, descriptionAr: dto.descriptionAr,
         descriptionEn: dto.descriptionEn, imageUrl: dto.imageUrl, basePrice: dto.basePrice,
         categoryId: dto.categoryId, sortOrder: dto.sortOrder ?? 0, isActive: dto.isActive ?? true,
         branchProducts: { create: branches.map((branch) => ({ branchId: branch.id, isAvailable: true })) },
@@ -152,6 +153,23 @@ export class AdminCatalogService {
 
   listSettings() { return this.prisma.appSetting.findMany({ orderBy: { key: 'asc' } }); }
   setSetting(key: string, value: string) { return this.prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } }); }
+
+  private async generateUniqueSku(name: string) {
+    const base = name
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 32) || 'PRODUCT';
+    let sku = base;
+    let counter = 2;
+    while (await this.prisma.product.findUnique({ where: { sku } })) {
+      sku = `${base}-${counter}`;
+      counter += 1;
+    }
+    return sku;
+  }
 
   private async ensureProduct(id: string) {
     const product = await this.prisma.product.findUnique({ where: { id } });
