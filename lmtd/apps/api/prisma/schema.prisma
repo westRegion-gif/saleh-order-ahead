@@ -219,10 +219,19 @@ model Order {
   items OrderItem[]
   statusHistory OrderStatusHistory[]
   outboxEvents OutboxEvent[]
+  idempotencyRecord OrderIdempotency?
   @@index([idempotencyKey])
   @@index([createdAt])
   @@index([status])
   @@map("orders")
+}
+
+model OrderIdempotency {
+  key String @id
+  orderId String? @unique @map("order_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  order Order? @relation(fields:[orderId],references:[id],onDelete:Cascade)
+  @@map("order_idempotency")
 }
 
 model OrderItem {
