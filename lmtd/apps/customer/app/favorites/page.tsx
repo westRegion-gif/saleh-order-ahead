@@ -1,2 +1,18 @@
-import Link from'next/link';import{AppScreen,Header,IMG}from'../_components';
-export default function Favorites(){return <AppScreen><Header title="المفضلة" back="/profile"/><div className="content"><h1>طلباتك المفضلة</h1><p className="muted">احفظ طلباتك المعتادة واطلبها مرة ثانية بسرعة.</p><div className="favoriteCard"><img src={IMG+'spanish-latte-cold.png'} alt="Spanish Latte"/><div><small>طلب محفوظ</small><b>Spanish Latte Cold</b><span>عادي · حليب عادي</span></div><b>AED 24</b></div><Link className="blackCta" href="/product/spanish-latte">اطلب مرة ثانية <span>←</span></Link><Link className="outlineCta" href="/menu">استكشف المنيو</Link></div></AppScreen>}
+import Link from 'next/link';
+import { AppScreen, Header } from '../_components';
+
+export default function Favorites() {
+  return (
+    <AppScreen>
+      <Header title="المفضلة" back="/profile" />
+      <div className="content" dir="rtl">
+        <h1>طلباتك المفضلة</h1>
+        <div className="emptyState">
+          <b>المفضلة غير مفعلة بعد</b>
+          <span>لن نعرض طلبات أو منتجات تجريبية. ستعمل هذه الصفحة بعد تفعيل حساب العميل وحفظ المفضلة في السيرفر.</span>
+        </div>
+        <Link className="outlineCta" href="/menu">استكشف المنيو</Link>
+      </div>
+    </AppScreen>
+  );
+}
