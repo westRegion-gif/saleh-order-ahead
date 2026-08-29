@@ -8,7 +8,7 @@ export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateOrderDto) {
-    const existing = await this.prisma.order.findUnique({ where: { idempotencyKey: dto.idempotencyKey }, include: { items: true } });
+    const existing = await this.prisma.order.findFirst({ where: { idempotencyKey: dto.idempotencyKey }, include: { items: true } });
     if (existing) return existing;
 
     const branch = await this.prisma.branch.findFirst({ where: { id: dto.branchId, isActive: true } });
