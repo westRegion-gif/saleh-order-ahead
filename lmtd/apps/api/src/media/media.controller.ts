@@ -10,7 +10,7 @@ class PresignDto {
 }
 
 @Controller('media')
-export class MediaController {
+export class PublicMediaController {
   constructor(private readonly media: MediaService) {}
 
   @Get('object/:key')
@@ -18,9 +18,14 @@ export class MediaController {
     const url = await this.media.signedReadUrl(decodeURIComponent(encodedKey));
     return res.redirect(302, url);
   }
+}
 
-  @UseGuards(AdminAuthGuard)
-  @Post('../admin/media/presign')
+@UseGuards(AdminAuthGuard)
+@Controller('admin/media')
+export class AdminMediaController {
+  constructor(private readonly media: MediaService) {}
+
+  @Post('presign')
   presign(@Body() body: PresignDto) {
     return this.media.presign(body.filename, body.contentType);
   }
