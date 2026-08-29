@@ -115,9 +115,16 @@ export class CreatePromotionDto {
   @IsOptional() @IsString() endsAt?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
-export class UpdatePromotionDto extends CreatePromotionDto {
-  @IsOptional() declare name: string;
-  @IsOptional() declare type: string;
-  @IsOptional() declare value: number;
+export class UpdatePromotionDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() code?: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) value?: number;
+  @IsOptional() @IsString() scope?: string;
+  @IsOptional() @IsString() targetId?: string;
+  @IsOptional() @IsArray() @IsString({each:true}) branchIds?: string[];
+  @IsOptional() @IsString() startsAt?: string;
+  @IsOptional() @IsString() endsAt?: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }
 export class UpdateSettingDto { @IsString() value!: string; }
