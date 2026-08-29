@@ -23,7 +23,9 @@ export class AdminCatalogService {
 
   async createProduct(dto: CreateProductDto) {
     const branches = await this.prisma.branch.findMany({ where: { isActive: true }, select: { id: true } });
-    const sku = dto.sku?.trim() || await this.generateUniqueSku(dto.nameEn || dto.nameAr);
+    // SKU is an internal immutable identifier. Never trust the admin form value;
+    // this also prevents a removed FormData field from becoming the literal "null" SKU.
+    const sku = await this.generateUniqueSku(dto.nameEn || dto.nameAr);
     return this.prisma.product.create({
       data: {
         sku, nameAr: dto.nameAr, nameEn: dto.nameEn, descriptionAr: dto.descriptionAr,
@@ -37,7 +39,9 @@ export class AdminCatalogService {
 
   async updateProduct(id: string, dto: UpdateProductDto) {
     await this.ensureProduct(id);
-    return this.prisma.product.update({ where: { id }, data: dto, include: { category: true, branchProducts: { include: { branch: true } } } });
+    // SKU stays immutable after creation even if an old client submits it.
+    const { sku: _ignoredSku, ...data } = dto;
+    return this.prisma.product.update({ where: { id }, data, include: { category: true, branchProducts: { include: { branch: true } } } });
   }
   async deactivateProduct(id: string) { await this.ensureProduct(id); return this.prisma.product.update({ where: { id }, data: { isActive: false } }); }
 
@@ -101,7 +105,7 @@ export class AdminCatalogService {
   async createModifier(dto: CreateModifierDto) {
     if (!await this.prisma.modifierGroup.findUnique({ where: { id: dto.modifierGroupId } })) throw new NotFoundException('Modifier group not found');
     const branches = await this.prisma.branch.findMany({ where: { isActive: true }, select: { id: true } });
-    return this.prisma.modifier.create({ data: { ...dto, priceDelta: dto.priceDelta ?? 0, isActive: dto.isActive ?? true, branchModifiers: { create: branches.map((b) => ({ branchId: b.id, isAvailable: true })) } } });
+    return this.prisma.modifier.create({ data: { ...dto, priceDelta: dto.priceDelta ?? 0, isActive: dto.isActive ?? true, branchModifiers: { create: branches.map((b) => ({ branchId: b.id, isAvailable: true })) } });
   }
   async updateModifier(id: string, dto: UpdateModifierDto) {
     if (!await this.prisma.modifier.findUnique({ where: { id } })) throw new NotFoundException('Modifier not found');
