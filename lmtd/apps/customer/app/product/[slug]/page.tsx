@@ -1,14 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { AppScreen, Header } from '../../_components';
 import { getMenu, MenuProduct } from '../../_api';
 import { addCartItem, makeCartItem, CartSelection } from '../../_cart';
 
 export default function ProductPage() {
   const params = useParams<{ slug: string }>();
-  const search = useSearchParams();
   const router = useRouter();
   const [product, setProduct] = useState<MenuProduct | null>(null);
   const [branchId, setBranchId] = useState('');
@@ -18,6 +17,7 @@ export default function ProductPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
     const branch = search.get('branch') || localStorage.getItem('lmtd_branch_id') || '';
     if (!branch) {
       router.replace('/branches');
@@ -41,7 +41,7 @@ export default function ProductPage() {
         setSelected(defaults);
       })
       .catch(() => setError('تعذر تحميل تفاصيل المنتج.'));
-  }, [params.slug, router, search]);
+  }, [params.slug, router]);
 
   const selections = useMemo<CartSelection[]>(() => {
     if (!product) return [];
