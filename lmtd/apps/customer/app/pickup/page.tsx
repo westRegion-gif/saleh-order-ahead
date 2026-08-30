@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppScreen, Header } from '../_components';
 import { getBranches, Branch } from '../_api';
+import { readCustomerToken } from '../_auth';
 import { readCart } from '../_cart';
 import { submitCheckout } from '../_checkout';
 
@@ -17,6 +18,12 @@ export default function Pickup() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!readCustomerToken()) {
+      sessionStorage.setItem('lmtd_login_return', '/pickup');
+      router.replace('/login');
+      return;
+    }
+
     const cart = readCart();
     const branchId = cart[0]?.branchId || '';
     if (!branchId) {
