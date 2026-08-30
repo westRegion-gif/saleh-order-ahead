@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - phase3-auth-orders-payment
+      - lmtd-i18n-staging
     paths:
       - 'lmtd/**'
       - '.github/workflows/lmtd-phase3-ci.yml'
