@@ -108,7 +108,7 @@ async function parseError(res: Response, fallback: string) {
   return message || fallback;
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = getCustomerToken();
   return token ? { authorization: `Bearer ${token}` } : {};
 }
