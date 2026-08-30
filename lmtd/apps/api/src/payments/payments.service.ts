@@ -19,22 +19,53 @@ export class PaymentsService {
   }
 
   private provider() {
-    const provider = (process.env.PAYMENT_PROVIDER || 'disabled').toLowerCase();
+    const provider = (process.env.PAYMENT_PROVIDER || 'disabled').trim().toLowerCase();
     if (provider !== 'stripe') throw new ServiceUnavailableException('Payment provider is not enabled');
-    return provider;
   }
 
-  private async stripeRequest(path: string, init: RequestInit = {}) {
+  private async stripeRequest(path: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) {
     const response = await fetch(`https://api.stripe.com/v1${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${this.stripeSecret()}`,
-        ...(init.headers || {}),
-      },
+      method: init.method,
+      headers: { authorization: `Bearer ${this.stripeSecret()}`, ...(init.headers || {}) },
+      body: init.body,
     });
     const body = await response.json().catch(() => null) as any;
     if (!response.ok) throw new BadRequestException(body?.error?.message || 'Stripe request failed');
     return body;
+  }
+
+  private intentParams(order: { id: string; orderNumber: string; total: unknown; currency: string }, customerId: string) {
+    const amount = Math.round(Number(order.total) * 100);
+    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('Invalid order total');
+    const params = new URLSearchParams();
+    params.set('amount', String(amount));
+    params.set('currency', order.currency.toLowerCase());
+    params.set('automatic_payment_methods[enabled]', 'true');
+    params.set('metadata[orderId]', order.id);
+    params.set('metadata[orderNumber]', order.orderNumber);
+    params.set('metadata[customerId]', customerId);
+    return params;
+  }
+
+  private async createStripeIntent(attemptId: string, idempotencyKey: string, order: { id: string; orderNumber: string; total: unknown; currency: string }, customerId: string) {
+    try {
+      const intent = await this.stripeRequest('/payment_intents', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', 'idempotency-key': idempotencyKey },
+        body: this.intentParams(order, customerId).toString(),
+      });
+      await this.prisma.paymentAttempt.update({
+        where: { id: attemptId },
+        data: { providerReference: intent.id, status: String(intent.status || 'REQUIRES_PAYMENT_METHOD').toUpperCase(), failureReason: null },
+      });
+      return { paymentAttemptId: attemptId, provider: 'stripe', status: intent.status, clientSecret: intent.client_secret };
+    } catch (error) {
+      await this.prisma.paymentAttempt.update({
+        where: { id: attemptId },
+        data: { status: 'FAILED', failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Stripe request failed' },
+      }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async createIntent(customerId: string, orderId: string, idempotencyKey: string) {
@@ -46,45 +77,39 @@ export class PaymentsService {
     const existing = await this.prisma.paymentAttempt.findUnique({ where: { idempotencyKey } });
     if (existing) {
       if (existing.customerId !== customerId || existing.orderId !== orderId) throw new BadRequestException('Invalid payment idempotency key');
-      if (!existing.providerReference) throw new BadRequestException('Payment attempt is not ready');
-      const intent = await this.stripeRequest(`/payment_intents/${encodeURIComponent(existing.providerReference)}`);
-      return { paymentAttemptId: existing.id, provider: 'stripe', status: existing.status, clientSecret: intent.client_secret };
+      if (existing.providerReference) {
+        const intent = await this.stripeRequest(`/payment_intents/${encodeURIComponent(existing.providerReference)}`);
+        return { paymentAttemptId: existing.id, provider: 'stripe', status: intent.status, clientSecret: intent.client_secret };
+      }
+      return this.createStripeIntent(existing.id, idempotencyKey, order, customerId);
     }
 
-    const attempt = await this.prisma.paymentAttempt.create({
-      data: {
-        orderId,
-        customerId,
-        provider: 'stripe',
-        idempotencyKey,
-        status: 'CREATING',
-        amount: order.total,
-        currency: order.currency,
-      },
-    });
-
+    let attempt;
     try {
-      const params = new URLSearchParams();
-      params.set('amount', String(Math.round(Number(order.total) * 100)));
-      params.set('currency', order.currency.toLowerCase());
-      params.set('automatic_payment_methods[enabled]', 'true');
-      params.set('metadata[orderId]', order.id);
-      params.set('metadata[orderNumber]', order.orderNumber);
-      params.set('metadata[customerId]', customerId);
-      const intent = await this.stripeRequest('/payment_intents', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', 'idempotency-key': idempotencyKey },
-        body: params.toString(),
+      attempt = await this.prisma.paymentAttempt.create({
+        data: {
+          orderId,
+          customerId,
+          provider: 'stripe',
+          idempotencyKey,
+          status: 'CREATING',
+          amount: order.total,
+          currency: order.currency,
+        },
       });
-      await this.prisma.paymentAttempt.update({
-        where: { id: attempt.id },
-        data: { providerReference: intent.id, status: String(intent.status || 'REQUIRES_PAYMENT_METHOD').toUpperCase() },
-      });
-      return { paymentAttemptId: attempt.id, provider: 'stripe', status: intent.status, clientSecret: intent.client_secret };
     } catch (error) {
-      await this.prisma.paymentAttempt.update({ where: { id: attempt.id }, data: { status: 'FAILED', failureReason: error instanceof Error ? error.message : 'Stripe request failed' } }).catch(() => undefined);
-      throw error;
+      const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code || '') : '';
+      if (code !== 'P2002') throw error;
+      const duplicate = await this.prisma.paymentAttempt.findUnique({ where: { idempotencyKey } });
+      if (!duplicate || duplicate.customerId !== customerId || duplicate.orderId !== orderId) throw new BadRequestException('Payment idempotency key conflict');
+      if (duplicate.providerReference) {
+        const intent = await this.stripeRequest(`/payment_intents/${encodeURIComponent(duplicate.providerReference)}`);
+        return { paymentAttemptId: duplicate.id, provider: 'stripe', status: intent.status, clientSecret: intent.client_secret };
+      }
+      return this.createStripeIntent(duplicate.id, idempotencyKey, order, customerId);
     }
+
+    return this.createStripeIntent(attempt.id, idempotencyKey, order, customerId);
   }
 
   private verifyStripeSignature(rawBody: Buffer, signature: string) {
@@ -109,7 +134,13 @@ export class PaymentsService {
 
   async handleStripeWebhook(rawBody: Buffer, signature: string) {
     this.verifyStripeSignature(rawBody, signature);
-    const event = JSON.parse(rawBody.toString('utf8')) as any;
+    let event: any;
+    try {
+      event = JSON.parse(rawBody.toString('utf8'));
+    } catch {
+      throw new BadRequestException('Invalid Stripe webhook payload');
+    }
+
     const intent = event?.data?.object;
     const providerReference = intent?.id as string | undefined;
     if (!providerReference) return { received: true };
@@ -131,7 +162,7 @@ export class PaymentsService {
 
     if (event.type === 'payment_intent.payment_failed') {
       await this.prisma.$transaction(async (tx) => {
-        await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: 'FAILED', failureReason: intent?.last_payment_error?.message || 'Payment failed' } });
+        await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: 'FAILED', failureReason: String(intent?.last_payment_error?.message || 'Payment failed').slice(0, 500) } });
         const currentOrder = await tx.order.findUnique({ where: { id: attempt.orderId } });
         if (currentOrder?.status === 'PAYMENT_PENDING') {
           await tx.order.update({ where: { id: attempt.orderId }, data: { status: 'PAYMENT_FAILED' } });
