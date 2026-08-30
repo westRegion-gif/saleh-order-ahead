@@ -1,11 +1,23 @@
 import type { MenuProduct } from './_api';
 
-export type CartSelection = { groupId: string; groupName: string; optionId: string; optionName: string; priceDelta: number };
+export type CartSelection = {
+  groupId: string;
+  groupName: string;
+  groupNameAr?: string;
+  groupNameEn?: string;
+  optionId: string;
+  optionName: string;
+  optionNameAr?: string;
+  optionNameEn?: string;
+  priceDelta: number;
+};
 export type CartItem = {
   key: string;
   branchId: string;
   productId: string;
   name: string;
+  nameAr?: string;
+  nameEn?: string;
   imageUrl?: string | null;
   unitPrice: number;
   quantity: number;
@@ -48,6 +60,8 @@ export function makeCartItem(product: MenuProduct, branchId: string, quantity: n
     branchId,
     productId: product.id,
     name: product.nameAr || product.nameEn || 'LMTD Coffee',
+    nameAr: product.nameAr || product.nameEn || 'LMTD Coffee',
+    nameEn: product.nameEn || product.nameAr || 'LMTD Coffee',
     imageUrl: product.imageUrl,
     unitPrice: product.price,
     quantity,
