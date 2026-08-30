@@ -18,6 +18,8 @@ jobs:
     env:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       NEXT_PUBLIC_API_URL: https://example.invalid/v1
+      CUSTOMER_JWT_SECRET: ci-only-customer-secret
+      CUSTOMER_OTP_PEPPER: ci-only-otp-pepper
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -27,8 +29,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: lmtd/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
       - name: Validate Prisma schema
