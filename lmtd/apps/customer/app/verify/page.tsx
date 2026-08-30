@@ -6,9 +6,12 @@ import { useRouter } from 'next/navigation';
 import { AppScreen, Header } from '../_components';
 import { requestOtp, verifyOtp } from '../_api';
 import { saveCustomerSession } from '../_auth';
+import { useLanguage } from '../_language';
 
 export default function Verify() {
   const router = useRouter();
+  const { language, dir, setLanguage } = useLanguage();
+  const ar = language === 'ar';
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -32,7 +35,7 @@ export default function Verify() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!/^\d{6}$/.test(code)) {
-      setError('أدخل رمز التحقق المكون من 6 أرقام');
+      setError(ar ? 'أدخل رمز التحقق المكون من 6 أرقام' : 'Enter the 6-digit verification code');
       return;
     }
     setBusy(true);
@@ -41,12 +44,13 @@ export default function Verify() {
     try {
       const result = await verifyOtp(phone, code);
       saveCustomerSession(result.accessToken, result.customer);
+      setLanguage(language);
       sessionStorage.removeItem('lmtd_login_phone');
       const destination = sessionStorage.getItem('lmtd_login_return') || '/home';
       sessionStorage.removeItem('lmtd_login_return');
       router.replace(destination.startsWith('/') ? destination : '/home');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر التحقق من الرمز');
+      setError(err instanceof Error ? err.message : (ar ? 'تعذر التحقق من الرمز' : 'Could not verify code'));
     } finally {
       setBusy(false);
     }
@@ -61,9 +65,9 @@ export default function Verify() {
       await requestOtp(phone);
       setCode('');
       setResendIn(60);
-      setMessage('تم إرسال رمز تحقق جديد.');
+      setMessage(ar ? 'تم إرسال رمز تحقق جديد.' : 'A new verification code was sent.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر إعادة إرسال رمز التحقق');
+      setError(err instanceof Error ? err.message : (ar ? 'تعذر إعادة إرسال رمز التحقق' : 'Could not resend verification code'));
     } finally {
       setResending(false);
     }
@@ -71,19 +75,19 @@ export default function Verify() {
 
   return (
     <AppScreen>
-      <Header title="التحقق" back="/login" />
-      <form className="content authPage" dir="rtl" onSubmit={submit}>
+      <Header title="التحقق" titleEn="Verification" back="/login" />
+      <form className="content authPage" dir={dir} onSubmit={submit}>
         <p className="kicker">OTP VERIFICATION</p>
-        <h1>رمز التحقق</h1>
-        <p className="muted">أدخل الرمز المرسل إلى {phone || 'رقم هاتفك'}.</p>
+        <h1>{ar ? 'رمز التحقق' : 'Verification code'}</h1>
+        <p className="muted">{ar ? `أدخل الرمز المرسل إلى ${phone || 'رقم هاتفك'}.` : `Enter the code sent to ${phone || 'your phone number'}.`}</p>
         <input className="noteBox" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder="000000" />
         {error && <p className="muted">{error}</p>}
         {message && <p className="muted">{message}</p>}
-        <button className="blackCta" type="submit" disabled={busy || !phone}>{busy ? 'جاري التحقق...' : 'تأكيد الرمز'} <span>←</span></button>
+        <button className="blackCta" type="submit" disabled={busy || !phone}>{busy ? (ar ? 'جاري التحقق...' : 'Verifying...') : (ar ? 'تأكيد الرمز' : 'Verify code')} <span>←</span></button>
         <button className="outlineCta" type="button" disabled={!phone || resendIn > 0 || resending} onClick={resend}>
-          {resending ? 'جاري الإرسال...' : resendIn > 0 ? `إعادة الإرسال بعد ${resendIn} ثانية` : 'إعادة إرسال الرمز'}
+          {resending ? (ar ? 'جاري الإرسال...' : 'Sending...') : resendIn > 0 ? (ar ? `إعادة الإرسال بعد ${resendIn} ثانية` : `Resend in ${resendIn}s`) : (ar ? 'إعادة إرسال الرمز' : 'Resend code')}
         </button>
-        <Link className="textLink" href="/login">تغيير رقم الهاتف</Link>
+        <Link className="textLink" href="/login">{ar ? 'تغيير رقم الهاتف' : 'Change phone number'}</Link>
       </form>
     </AppScreen>
   );
