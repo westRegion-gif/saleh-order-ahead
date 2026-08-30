@@ -7,67 +7,33 @@ import { CreateOrderDto } from './dto/create-order.dto';
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getPublic(id: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        orderNumber: true,
-        status: true,
-        pickupMethod: true,
-        currency: true,
-        subtotal: true,
-        discountTotal: true,
-        taxTotal: true,
-        total: true,
-        note: true,
-        createdAt: true,
-        branch: {
-          select: {
-            id: true,
-            code: true,
-            nameAr: true,
-            nameEn: true,
-            addressAr: true,
-            addressEn: true,
-            imageUrl: true,
-            prepTimeMin: true,
-            prepTimeMax: true,
-            acceptsOrders: true,
-            isOpenOverride: true,
-          },
-        },
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            productName: true,
-            quantity: true,
-            unitPrice: true,
-            lineTotal: true,
-            modifiersJson: true,
-            note: true,
-          },
-        },
-        statusHistory: {
-          orderBy: { createdAt: 'asc' },
-          select: { id: true, status: true, note: true, createdAt: true },
-        },
-      },
+  listForCustomer(customerId: string) {
+    return this.prisma.order.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: { items: true, branch: true, statusHistory: { orderBy: { createdAt: 'asc' } } },
+    });
+  }
+
+  async getForCustomer(id: string, customerId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id, customerId },
+      include: { items: true, branch: true, statusHistory: { orderBy: { createdAt: 'asc' } }, payments: { orderBy: { createdAt: 'desc' } } },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
   }
 
-  private async findExisting(idempotencyKey: string) {
+  private async findExisting(idempotencyKey: string, customerId: string) {
     return this.prisma.order.findFirst({
-      where: { idempotencyKey },
+      where: { idempotencyKey, customerId },
       include: { items: true, branch: true, statusHistory: true },
     });
   }
 
-  async create(dto: CreateOrderDto) {
-    const existing = await this.findExisting(dto.idempotencyKey);
+  async create(dto: CreateOrderDto, customerId: string) {
+    const existing = await this.findExisting(dto.idempotencyKey, customerId);
     if (existing) return existing;
 
     const branch = await this.prisma.branch.findFirst({ where: { id: dto.branchId, isActive: true } });
@@ -108,6 +74,7 @@ export class OrdersService {
       if (!row.isAvailable) throw new BadRequestException(`${row.product.nameAr} is sold out`);
 
       const selectedIds = requested.modifiers.map((modifier) => modifier.modifierId);
+      if (new Set(selectedIds).size !== selectedIds.length) throw new BadRequestException('Duplicate modifier selection');
       const snapshots: Array<{ groupId: string; groupName: string; modifierId: string; modifierName: string; priceDelta: number }> = [];
       let modifierTotal = 0;
 
@@ -158,6 +125,7 @@ export class OrdersService {
           data: {
             orderNumber,
             idempotencyKey: dto.idempotencyKey,
+            customerId,
             branchId: dto.branchId,
             status: 'PAYMENT_PENDING',
             pickupMethod: dto.pickupMethod,
@@ -182,7 +150,7 @@ export class OrdersService {
           data: {
             orderId: order.id,
             eventType: 'ORDER_CREATED',
-            payload: { orderId: order.id, orderNumber: order.orderNumber, status: order.status },
+            payload: { orderId: order.id, orderNumber: order.orderNumber, customerId, status: order.status },
           },
         });
         return order;
@@ -190,7 +158,7 @@ export class OrdersService {
     } catch (error) {
       const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code || '') : '';
       if (code === 'P2002') {
-        const duplicate = await this.findExisting(dto.idempotencyKey);
+        const duplicate = await this.findExisting(dto.idempotencyKey, customerId);
         if (duplicate) return duplicate;
       }
       throw error;
