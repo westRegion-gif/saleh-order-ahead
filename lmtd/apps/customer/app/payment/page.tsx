@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { AppScreen, Header } from '../_components';
-import { CreatedOrder, getOrder } from '../_api';
+import { CreatedOrder, createPaymentSession, getOrder } from '../_api';
 
 export default function Payment() {
   const [order, setOrder] = useState<CreatedOrder | null>(null);
   const [loading, setLoading] = useState(true);
+  const [paying, setPaying] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -34,13 +35,27 @@ export default function Payment() {
       .finally(() => setLoading(false));
   }, []);
 
+  async function pay() {
+    if (!order || paying || order.status !== 'PAYMENT_PENDING') return;
+    setPaying(true);
+    setError('');
+    try {
+      const session = await createPaymentSession(order.id);
+      window.location.assign(session.checkoutUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر بدء عملية الدفع');
+      setPaying(false);
+    }
+  }
+
   const total = Number(order?.total || 0);
+  const canPay = !!order && order.status === 'PAYMENT_PENDING';
 
   return (
     <AppScreen>
       <Header title="الدفع" back="/pickup" />
       <div className="content" dir="rtl">
-        <p className="kicker">CHECKOUT</p>
+        <p className="kicker">SECURE CHECKOUT</p>
         <h1>إتمام الطلب</h1>
 
         {loading && <div className="checkoutSummary"><b>جاري تحميل الطلب...</b></div>}
@@ -56,12 +71,8 @@ export default function Payment() {
 
         <h3>طريقة الدفع</h3>
         <label className="payCard selectedPay">
-          <div><span className="cardGlyph">▰</span><span><b>بطاقة بنكية</b><small>سيتم ربط بوابة الدفع في الخطوة التالية</small></span></div>
-          <input type="radio" name="pay" defaultChecked disabled />
-        </label>
-        <label className="payCard">
-          <div><span className="cardGlyph">◉</span><span><b>Apple Pay</b><small>سيتم تفعيله مع مزود الدفع</small></span></div>
-          <input type="radio" name="pay" disabled />
+          <div><span className="cardGlyph">▰</span><span><b>دفع آمن</b><small>سيتم فتح صفحة الدفع الآمنة الخاصة بمزود الدفع.</small></span></div>
+          <input type="radio" name="pay" defaultChecked readOnly />
         </label>
 
         {order && (
@@ -73,8 +84,8 @@ export default function Payment() {
           </div>
         )}
 
-        <button className="blackCta" type="button" disabled>الدفع غير مفعل بعد <span>AED {total.toFixed(2)}</span></button>
-        <p className="secureNote">لن يتم تأكيد الطلب أو إرساله للتجهيز قبل نجاح الدفع.</p>
+        <button className="blackCta" type="button" onClick={pay} disabled={!canPay || paying}>{paying ? 'جاري فتح الدفع...' : canPay ? 'الدفع الآن' : 'الطلب لا ينتظر الدفع'} <span>AED {total.toFixed(2)}</span></button>
+        <p className="secureNote">لن ينتقل الطلب إلى الفرع للتجهيز إلا بعد تأكيد الدفع من Webhook الخاص بمزود الدفع.</p>
       </div>
     </AppScreen>
   );
