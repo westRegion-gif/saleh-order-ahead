@@ -32,7 +32,9 @@ export default function Verify() {
       const result = await verifyOtp(phone, code);
       saveCustomerSession(result.accessToken, result.customer);
       sessionStorage.removeItem('lmtd_login_phone');
-      router.replace('/home');
+      const destination = sessionStorage.getItem('lmtd_login_return') || '/home';
+      sessionStorage.removeItem('lmtd_login_return');
+      router.replace(destination.startsWith('/') ? destination : '/home');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر التحقق من الرمز');
     } finally {
