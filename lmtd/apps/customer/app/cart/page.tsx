@@ -56,7 +56,7 @@ export default function Cart() {
           <>
             <div className="bill">
               <div><span>المجموع المبدئي</span><b>AED {total.toFixed(2)}</b></div>
-              <div><span>السعر النهائي</span><b>يُحسب من السيرفر عند إنشاء الطلب</b></div>
+              <div><span>السعر النهائي</span><b>AED {total.toFixed(2)}</b></div>
             </div>
             <Link className="blackCta" href="/pickup">متابعة لاختيار الاستلام <span>AED {total.toFixed(2)}</span></Link>
           </>
