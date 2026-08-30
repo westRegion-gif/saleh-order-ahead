@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export class RequestOtpDto {
   @IsString()
@@ -23,7 +23,7 @@ export class UpdateCustomerProfileDto {
   fullName?: string;
 
   @IsOptional()
-  @IsString()
+  @IsEmail()
   @MaxLength(200)
   email?: string;
 
