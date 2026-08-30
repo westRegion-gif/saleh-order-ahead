@@ -1,0 +1,45 @@
+name: LMTD V4 CI
+
+on:
+  push:
+    branches:
+      - lmtd-v4-rebuild
+      - lmtd-phase3-staging
+  pull_request:
+    branches:
+      - lmtd-v4-rebuild
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lmtd
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      NEXT_PUBLIC_API_URL: https://example.invalid/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: lmtd/pnpm-lock.yaml
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Validate Prisma schema
+        run: pnpm --filter @lmtd/api exec prisma validate
+      - name: Build API
+        run: pnpm --filter @lmtd/api build
+      - name: Typecheck Customer
+        run: pnpm --filter @lmtd/customer typecheck
+      - name: Build Customer
+        run: pnpm --filter @lmtd/customer build
+      - name: Typecheck Admin
+        run: pnpm --filter @lmtd/admin typecheck
+      - name: Build Admin
+        run: pnpm --filter @lmtd/admin build
