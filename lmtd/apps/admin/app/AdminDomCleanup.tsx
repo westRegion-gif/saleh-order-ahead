@@ -6,9 +6,14 @@ export default function AdminDomCleanup() {
   useEffect(() => {
     const clean = () => {
       document.querySelectorAll<HTMLInputElement>('input[name="sku"]').forEach((input) => {
+        // Keep the SKU field in React's DOM tree so form submission/unmounting stays stable.
+        // The backend generates/locks SKU; admins do not need to edit it.
+        input.required = false;
+        input.type = 'hidden';
         const label = input.closest('label');
-        if (label) label.remove();
-        else input.remove();
+        if (label) {
+          label.style.display = 'none';
+        }
       });
     };
 
