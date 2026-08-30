@@ -2,58 +2,74 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppScreen, Header } from '../_components';
 import { CreatedOrder, getOrder } from '../_api';
+import { readCustomerToken } from '../_auth';
 
 const FLOW = ['PAYMENT_PENDING', 'PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'COLLECTED', 'COMPLETED'];
+const TERMINAL = new Set(['COMPLETED', 'CANCELLED', 'REJECTED', 'REFUNDED']);
 
 function label(status: string) {
   const labels: Record<string, string> = {
-    PAYMENT_PENDING: 'بانتظار الدفع',
-    PENDING: 'تم استلام الطلب',
-    ACCEPTED: 'تم قبول الطلب',
-    PREPARING: 'جاري التحضير',
-    READY: 'جاهز للاستلام',
-    CUSTOMER_ARRIVED: 'تم تسجيل وصولك',
-    COLLECTED: 'تم الاستلام',
-    COMPLETED: 'اكتمل الطلب',
-    REJECTED: 'تم رفض الطلب',
-    CANCELLED: 'تم إلغاء الطلب',
-    PAYMENT_FAILED: 'فشل الدفع',
-    REFUNDED: 'تم استرجاع المبلغ',
+    PAYMENT_PENDING: 'بانتظار تأكيد الدفع', PENDING: 'تم استلام الطلب', ACCEPTED: 'تم قبول الطلب', PREPARING: 'جاري التحضير',
+    READY: 'جاهز للاستلام', CUSTOMER_ARRIVED: 'تم تسجيل وصولك', COLLECTED: 'تم الاستلام', COMPLETED: 'اكتمل الطلب',
+    REJECTED: 'تم رفض الطلب', CANCELLED: 'تم إلغاء الطلب', PAYMENT_FAILED: 'فشل الدفع', REFUNDED: 'تم استرجاع المبلغ',
   };
   return labels[status] || status;
 }
 
 export default function Tracking() {
+  const router = useRouter();
   const [order, setOrder] = useState<CreatedOrder | null>(null);
+  const [orderId, setOrderId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!readCustomerToken()) {
+      sessionStorage.setItem('lmtd_login_return', window.location.pathname + window.location.search);
+      router.replace('/login');
+      return;
+    }
     const search = new URLSearchParams(window.location.search);
-    let orderId = search.get('order') || '';
-
-    if (!orderId) {
+    let id = search.get('order') || '';
+    if (!id) {
       try {
         const pending = JSON.parse(localStorage.getItem('lmtd_pending_order') || 'null') as { id?: string } | null;
-        orderId = pending?.id || '';
-      } catch {
-        orderId = '';
-      }
+        id = pending?.id || '';
+      } catch { id = ''; }
     }
-
-    if (!orderId) {
+    if (!id) {
       setError('لا يوجد طلب للتتبع.');
       setLoading(false);
       return;
     }
+    setOrderId(id);
+  }, [router]);
 
-    getOrder(orderId)
-      .then(setOrder)
-      .catch((err) => setError(err instanceof Error ? err.message : 'تعذر تحميل الطلب'))
-      .finally(() => setLoading(false));
-  }, []);
+  useEffect(() => {
+    if (!orderId) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      try {
+        const next = await getOrder(orderId);
+        if (!active) return;
+        setOrder(next);
+        setError('');
+        setLoading(false);
+        if (!TERMINAL.has(next.status)) timer = setTimeout(refresh, 4000);
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : 'تعذر تحميل الطلب');
+        setLoading(false);
+        timer = setTimeout(refresh, 8000);
+      }
+    };
+    refresh();
+    return () => { active = false; if (timer) clearTimeout(timer); };
+  }, [orderId]);
 
   const currentIndex = useMemo(() => order ? FLOW.indexOf(order.status) : -1, [order]);
   const history = order?.statusHistory || [];
@@ -68,7 +84,9 @@ export default function Tracking() {
           <>
             <p className="kicker">ORDER #{order.orderNumber}</p>
             <h1>{label(order.status)}</h1>
-            <p className="eta">الحالة المعروضة مأخوذة مباشرة من السيرفر.</p>
+            <p className="eta">يتم تحديث الحالة تلقائياً من السيرفر.</p>
+
+            {order.status === 'PAYMENT_FAILED' && <Link className="blackCta" href={`/payment?order=${order.id}`}>إعادة محاولة الدفع <span>←</span></Link>}
 
             {currentIndex >= 0 && (
               <div className="progressLine">

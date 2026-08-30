@@ -1,3 +1,5 @@
+import { CustomerProfile, readCustomerToken } from './_auth';
+
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'https://grand-wisdom-production-5f91.up.railway.app/v1').replace(/\/$/, '');
 
 export type Branch = {
@@ -89,6 +91,20 @@ export type CreatedOrder = {
   statusHistory?: OrderStatusSnapshot[];
 };
 
+function authHeaders(json = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = readCustomerToken();
+  if (token) headers.authorization = `Bearer ${token}`;
+  if (json) headers['content-type'] = 'application/json';
+  return headers;
+}
+
+async function apiError(res: Response, fallback: string) {
+  const body = await res.json().catch(() => null);
+  const message = Array.isArray(body?.message) ? body.message.join('، ') : body?.message;
+  return new Error(message || fallback);
+}
+
 export async function getBranches(): Promise<Branch[]> {
   const res = await fetch(`${API_URL}/branches`, { cache: 'no-store' });
   if (!res.ok) throw new Error('تعذر تحميل الفروع');
@@ -101,25 +117,54 @@ export async function getMenu(branchId: string): Promise<{ branch: { id: string;
   return res.json();
 }
 
+export async function requestOtp(phone: string): Promise<{ ok: boolean; expiresInSeconds: number }> {
+  const res = await fetch(`${API_URL}/customer/auth/request-otp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ phone }) });
+  if (!res.ok) throw await apiError(res, 'تعذر إرسال رمز التحقق');
+  return res.json();
+}
+
+export async function verifyOtp(phone: string, code: string): Promise<{ accessToken: string; customer: CustomerProfile }> {
+  const res = await fetch(`${API_URL}/customer/auth/verify-otp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ phone, code }) });
+  if (!res.ok) throw await apiError(res, 'تعذر التحقق من الرمز');
+  return res.json();
+}
+
+export async function getMe(): Promise<CustomerProfile> {
+  const res = await fetch(`${API_URL}/customer/auth/me`, { headers: authHeaders(), cache: 'no-store' });
+  if (!res.ok) throw await apiError(res, 'تعذر تحميل الحساب');
+  return res.json();
+}
+
+export async function updateMe(input: { fullName?: string; email?: string; preferredLanguage?: 'ar' | 'en' }): Promise<CustomerProfile> {
+  const res = await fetch(`${API_URL}/customer/auth/me`, { method: 'PATCH', headers: authHeaders(true), body: JSON.stringify(input) });
+  if (!res.ok) throw await apiError(res, 'تعذر تحديث الحساب');
+  return res.json();
+}
+
 export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder> {
-  const res = await fetch(`${API_URL}/orders`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const message = Array.isArray(body?.message) ? body.message.join('، ') : body?.message;
-    throw new Error(message || 'تعذر إنشاء الطلب');
-  }
+  const res = await fetch(`${API_URL}/orders`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify(input) });
+  if (!res.ok) throw await apiError(res, res.status === 401 ? 'تسجيل الدخول مطلوب لإتمام الطلب' : 'تعذر إنشاء الطلب');
   return res.json();
 }
 
 export async function getOrder(orderId: string): Promise<CreatedOrder> {
-  const res = await fetch(`${API_URL}/orders/${encodeURIComponent(orderId)}`, { cache: 'no-store' });
-  if (!res.ok) {
-    if (res.status === 404) throw new Error('الطلب غير موجود');
-    throw new Error('تعذر تحميل الطلب');
-  }
+  const res = await fetch(`${API_URL}/orders/${encodeURIComponent(orderId)}`, { headers: authHeaders(), cache: 'no-store' });
+  if (!res.ok) throw await apiError(res, res.status === 404 ? 'الطلب غير موجود' : 'تعذر تحميل الطلب');
+  return res.json();
+}
+
+export async function getOrders(): Promise<CreatedOrder[]> {
+  const res = await fetch(`${API_URL}/orders`, { headers: authHeaders(), cache: 'no-store' });
+  if (!res.ok) throw await apiError(res, 'تعذر تحميل الطلبات');
+  return res.json();
+}
+
+export async function createPaymentIntent(orderId: string, idempotencyKey: string): Promise<{ paymentAttemptId: string; provider: string; status: string; clientSecret: string }> {
+  const res = await fetch(`${API_URL}/payments/intent`, {
+    method: 'POST',
+    headers: authHeaders(true),
+    body: JSON.stringify({ orderId, idempotencyKey }),
+  });
+  if (!res.ok) throw await apiError(res, 'تعذر بدء عملية الدفع');
   return res.json();
 }

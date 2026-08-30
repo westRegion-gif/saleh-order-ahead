@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 
 export class CreateOrderModifierDto {
   @IsUUID()
@@ -33,6 +33,7 @@ export class CreateOrderDto {
   pickupMethod!: 'WALK_IN' | 'VEHICLE';
 
   @IsString()
+  @MinLength(16)
   @MaxLength(120)
   idempotencyKey!: string;
 

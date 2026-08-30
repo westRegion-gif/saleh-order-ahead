@@ -1,0 +1,55 @@
+name: LMTD Phase 3 CI
+
+on:
+  push:
+    branches:
+      - phase3-auth-orders-payment
+    paths:
+      - 'lmtd/**'
+      - '.github/workflows/lmtd-phase3-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lmtd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @lmtd/api prisma:generate
+
+      - name: Build API
+        run: pnpm --filter @lmtd/api build
+
+      - name: Typecheck API
+        run: pnpm --filter @lmtd/api typecheck
+
+      - name: Build Customer
+        run: pnpm --filter @lmtd/customer build
+
+      - name: Typecheck Customer
+        run: pnpm --filter @lmtd/customer typecheck
+
+      - name: Build Admin
+        run: pnpm --filter @lmtd/admin build
+
+      - name: Typecheck Admin
+        run: pnpm --filter @lmtd/admin typecheck

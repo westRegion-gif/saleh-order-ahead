@@ -7,67 +7,39 @@ import { CreateOrderDto } from './dto/create-order.dto';
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getPublic(id: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        orderNumber: true,
-        status: true,
-        pickupMethod: true,
-        currency: true,
-        subtotal: true,
-        discountTotal: true,
-        taxTotal: true,
-        total: true,
-        note: true,
-        createdAt: true,
-        branch: {
-          select: {
-            id: true,
-            code: true,
-            nameAr: true,
-            nameEn: true,
-            addressAr: true,
-            addressEn: true,
-            imageUrl: true,
-            prepTimeMin: true,
-            prepTimeMax: true,
-            acceptsOrders: true,
-            isOpenOverride: true,
-          },
-        },
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            productName: true,
-            quantity: true,
-            unitPrice: true,
-            lineTotal: true,
-            modifiersJson: true,
-            note: true,
-          },
-        },
-        statusHistory: {
-          orderBy: { createdAt: 'asc' },
-          select: { id: true, status: true, note: true, createdAt: true },
-        },
-      },
+  listForCustomer(customerId: string) {
+    return this.prisma.order.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: { items: true, branch: true, statusHistory: { orderBy: { createdAt: 'asc' } } },
+    });
+  }
+
+  async getForCustomer(id: string, customerId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id, customerId },
+      include: { items: true, branch: true, statusHistory: { orderBy: { createdAt: 'asc' } }, payments: { orderBy: { createdAt: 'desc' } } },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
   }
 
-  private async findExisting(idempotencyKey: string) {
+  private async findExisting(idempotencyKey: string, customerId: string) {
     return this.prisma.order.findFirst({
-      where: { idempotencyKey },
+      where: { idempotencyKey, customerId },
       include: { items: true, branch: true, statusHistory: true },
     });
   }
 
-  async create(dto: CreateOrderDto) {
-    const existing = await this.findExisting(dto.idempotencyKey);
+  private async taxRatePercent() {
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'tax_rate_percent' } });
+    const value = Number(setting?.value ?? 0);
+    return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 0;
+  }
+
+  async create(dto: CreateOrderDto, customerId: string) {
+    const existing = await this.findExisting(dto.idempotencyKey, customerId);
     if (existing) return existing;
 
     const branch = await this.prisma.branch.findFirst({ where: { id: dto.branchId, isActive: true } });
@@ -108,6 +80,7 @@ export class OrdersService {
       if (!row.isAvailable) throw new BadRequestException(`${row.product.nameAr} is sold out`);
 
       const selectedIds = requested.modifiers.map((modifier) => modifier.modifierId);
+      if (new Set(selectedIds).size !== selectedIds.length) throw new BadRequestException('Duplicate modifier selection');
       const snapshots: Array<{ groupId: string; groupName: string; modifierId: string; modifierName: string; priceDelta: number }> = [];
       let modifierTotal = 0;
 
@@ -144,10 +117,12 @@ export class OrdersService {
       });
     }
 
-    const subtotal = pricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+    const subtotal = Math.round(pricedItems.reduce((sum, item) => sum + item.lineTotal, 0) * 100) / 100;
     const discountTotal = 0;
-    const taxTotal = 0;
-    const total = subtotal - discountTotal + taxTotal;
+    const taxRate = await this.taxRatePercent();
+    const taxable = Math.max(0, subtotal - discountTotal);
+    const taxTotal = Math.round(taxable * taxRate) / 100;
+    const total = Math.round((taxable + taxTotal) * 100) / 100;
     const orderNumber = `LMTD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
     try {
@@ -158,6 +133,7 @@ export class OrdersService {
           data: {
             orderNumber,
             idempotencyKey: dto.idempotencyKey,
+            customerId,
             branchId: dto.branchId,
             status: 'PAYMENT_PENDING',
             pickupMethod: dto.pickupMethod,
@@ -182,7 +158,7 @@ export class OrdersService {
           data: {
             orderId: order.id,
             eventType: 'ORDER_CREATED',
-            payload: { orderId: order.id, orderNumber: order.orderNumber, status: order.status },
+            payload: { orderId: order.id, orderNumber: order.orderNumber, customerId, status: order.status, taxRatePercent: taxRate },
           },
         });
         return order;
@@ -190,8 +166,9 @@ export class OrdersService {
     } catch (error) {
       const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code || '') : '';
       if (code === 'P2002') {
-        const duplicate = await this.findExisting(dto.idempotencyKey);
+        const duplicate = await this.findExisting(dto.idempotencyKey, customerId);
         if (duplicate) return duplicate;
+        throw new BadRequestException('Checkout idempotency key conflict');
       }
       throw error;
     }
