@@ -48,6 +48,7 @@ export default function Payment() {
   const [loading, setLoading] = useState(true);
   const [paymentReady, setPaymentReady] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [paymentFailed, setPaymentFailed] = useState(false);
   const [error, setError] = useState('');
   const stripeRef = useRef<any>(null);
   const elementsRef = useRef<any>(null);
@@ -75,6 +76,7 @@ export default function Payment() {
     getOrder(orderId)
       .then((next) => {
         setOrder(next);
+        setPaymentFailed(next.status === 'PAYMENT_FAILED');
         if (!['PAYMENT_PENDING', 'PAYMENT_FAILED'].includes(next.status)) {
           localStorage.removeItem(paymentStorageKey(next.id));
           router.replace(`/tracking?order=${next.id}`);
@@ -125,6 +127,7 @@ export default function Payment() {
   async function pay() {
     if (!order || !stripeRef.current || !elementsRef.current || paying) return;
     setPaying(true);
+    setPaymentFailed(false);
     setError('');
     try {
       const result = await stripeRef.current.confirmPayment({
@@ -133,7 +136,17 @@ export default function Payment() {
         redirect: 'if_required',
       });
       if (result?.error) {
+        const declined = result.error.code === 'card_declined' || Boolean(result.error.decline_code) || result.error.type === 'card_error';
+        setPaymentFailed(declined);
         setError(result.error.message || (ar ? 'تعذر إتمام الدفع' : 'Could not complete payment'));
+        if (declined) {
+          window.setTimeout(() => {
+            getOrder(order.id).then((next) => {
+              setOrder(next);
+              if (next.status === 'PAYMENT_FAILED') setPaymentFailed(true);
+            }).catch(() => undefined);
+          }, 1000);
+        }
         return;
       }
       router.replace(`/tracking?order=${order.id}`);
@@ -146,6 +159,7 @@ export default function Payment() {
 
   const total = Number(order?.total || 0);
   const branchName = order ? (ar ? (order.branch?.nameAr || order.branch?.nameEn) : (order.branch?.nameEn || order.branch?.nameAr)) : 'LMTD Coffee';
+  const showFailed = paymentFailed || order?.status === 'PAYMENT_FAILED';
 
   return (
     <AppScreen>
@@ -159,7 +173,7 @@ export default function Payment() {
             <div><span>{ar ? 'رقم الطلب' : 'Order number'}</span><b>{order.orderNumber}</b></div>
             <div><span>{ar ? 'الفرع' : 'Branch'}</span><b>{branchName || 'LMTD Coffee'}</b></div>
             <div><span>{ar ? 'الاستلام' : 'Pickup'}</span><b>{order.pickupMethod === 'VEHICLE' ? (ar ? 'استلام من السيارة' : 'Vehicle pickup') : (ar ? 'استلام من الكاونتر' : 'Counter pickup')}</b></div>
-            <div><span>{ar ? 'الحالة' : 'Status'}</span><b>{order.status === 'PAYMENT_FAILED' ? (ar ? 'فشل الدفع — حاول مرة أخرى' : 'Payment failed — try again') : (ar ? 'بانتظار الدفع' : 'Awaiting payment')}</b></div>
+            <div><span>{ar ? 'الحالة' : 'Status'}</span><b>{showFailed ? (ar ? 'فشل الدفع — حاول مرة أخرى' : 'Payment failed — try again') : (ar ? 'بانتظار الدفع' : 'Awaiting payment')}</b></div>
           </div>
         )}
 
@@ -177,7 +191,7 @@ export default function Payment() {
         )}
 
         <button className="blackCta" type="button" disabled={!paymentReady || paying || !order} onClick={pay}>
-          {paying ? (ar ? 'جاري تأكيد الدفع...' : 'Confirming payment...') : (ar ? 'ادفع الآن' : 'Pay now')} <span>AED {total.toFixed(2)}</span>
+          {paying ? (ar ? 'جاري تأكيد الدفع...' : 'Confirming payment...') : showFailed ? (ar ? 'أعد محاولة الدفع' : 'Retry payment') : (ar ? 'ادفع الآن' : 'Pay now')} <span>AED {total.toFixed(2)}</span>
         </button>
         <p className="secureNote">{ar ? 'يتم تأكيد الطلب فقط بعد استلام Webhook ناجح من مزود الدفع.' : 'The order is confirmed only after a successful payment webhook is received.'}</p>
       </div>
