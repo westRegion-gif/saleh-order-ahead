@@ -6,8 +6,12 @@ import { AppScreen, Header } from '../_components';
 import { CreatedOrder, createPaymentIntent, getOrder } from '../_api';
 import { readCustomerToken } from '../_auth';
 
+function paymentStorageKey(orderId: string) {
+  return `lmtd_payment_key_${orderId}`;
+}
+
 function paymentKey(orderId: string) {
-  const key = `lmtd_payment_key_${orderId}`;
+  const key = paymentStorageKey(orderId);
   const existing = localStorage.getItem(key);
   if (existing) return existing;
   const value = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -20,6 +24,7 @@ async function loadStripeJs() {
   await new Promise<void>((resolve, reject) => {
     const existing = document.querySelector<HTMLScriptElement>('script[data-lmtd-stripe]');
     if (existing) {
+      if ((window as any).Stripe) { resolve(); return; }
       existing.addEventListener('load', () => resolve(), { once: true });
       existing.addEventListener('error', () => reject(new Error('تعذر تحميل بوابة الدفع')), { once: true });
       return;
@@ -65,17 +70,20 @@ export default function Payment() {
       return;
     }
     getOrder(orderId)
-      .then(setOrder)
+      .then((next) => {
+        setOrder(next);
+        if (!['PAYMENT_PENDING', 'PAYMENT_FAILED'].includes(next.status)) {
+          localStorage.removeItem(paymentStorageKey(next.id));
+          router.replace(`/tracking?order=${next.id}`);
+        }
+      })
       .catch((err) => setError(err instanceof Error ? err.message : 'تعذر تحميل الطلب'))
       .finally(() => setLoading(false));
   }, [router]);
 
   useEffect(() => {
     if (!order || mountedOrderRef.current === order.id) return;
-    if (!['PAYMENT_PENDING', 'PAYMENT_FAILED'].includes(order.status)) {
-      if (['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'COLLECTED', 'COMPLETED'].includes(order.status)) router.replace(`/tracking?order=${order.id}`);
-      return;
-    }
+    if (!['PAYMENT_PENDING', 'PAYMENT_FAILED'].includes(order.status)) return;
     mountedOrderRef.current = order.id;
     let cancelled = false;
     (async () => {
@@ -83,15 +91,27 @@ export default function Payment() {
         const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.trim();
         if (!publishableKey) throw new Error('بوابة الدفع غير مفعلة في إعدادات التطبيق بعد');
         const intent = await createPaymentIntent(order.id, paymentKey(order.id));
+
+        if (intent.status === 'succeeded') {
+          localStorage.removeItem(paymentStorageKey(order.id));
+          router.replace(`/tracking?order=${order.id}`);
+          return;
+        }
+
         await loadStripeJs();
         if (cancelled) return;
         const stripe = (window as any).Stripe(publishableKey);
+        if (!stripe) throw new Error('تعذر تشغيل بوابة الدفع');
         const elements = stripe.elements({ clientSecret: intent.clientSecret, appearance: { theme: 'stripe' } });
-        const paymentElement = elements.create('payment', { layout: 'tabs' });
+        const paymentElement = elements.create('payment', {
+          layout: 'tabs',
+          wallets: { applePay: 'auto', googlePay: 'auto' },
+        });
         paymentElement.mount('#lmtd-payment-element');
+        paymentElement.on('ready', () => { if (!cancelled) setPaymentReady(true); });
+        paymentElement.on('loaderror', (event: any) => { if (!cancelled) setError(event?.error?.message || 'تعذر تحميل خيارات الدفع'); });
         stripeRef.current = stripe;
         elementsRef.current = elements;
-        setPaymentReady(true);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'تعذر تجهيز الدفع');
       }
@@ -100,15 +120,20 @@ export default function Payment() {
   }, [order, router]);
 
   async function pay() {
-    if (!order || !stripeRef.current || !elementsRef.current) return;
+    if (!order || !stripeRef.current || !elementsRef.current || paying) return;
     setPaying(true);
     setError('');
     try {
       const result = await stripeRef.current.confirmPayment({
         elements: elementsRef.current,
         confirmParams: { return_url: `${window.location.origin}/tracking?order=${order.id}` },
+        redirect: 'if_required',
       });
-      if (result?.error) setError(result.error.message || 'تعذر إتمام الدفع');
+      if (result?.error) {
+        setError(result.error.message || 'تعذر إتمام الدفع');
+        return;
+      }
+      router.replace(`/tracking?order=${order.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر إتمام الدفع');
     } finally {
@@ -136,6 +161,7 @@ export default function Payment() {
 
         {error && <div className="emptyState"><b>{error}</b></div>}
         <div id="lmtd-payment-element" className="formCard" style={{ minHeight: 80 }} />
+        <p className="secureNote">Apple Pay يظهر تلقائياً على الأجهزة والمتصفحات المؤهلة بعد التحقق من نطاق LMTD لدى Stripe.</p>
 
         {order && (
           <div className="bill">
