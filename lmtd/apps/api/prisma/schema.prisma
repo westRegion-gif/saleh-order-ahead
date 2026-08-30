@@ -158,6 +158,18 @@ model Customer {
   @@map("customers")
 }
 
+model CustomerOtpChallenge {
+  id String @id @default(uuid()) @db.Uuid
+  phone String
+  codeHash String @map("code_hash")
+  attempts Int @default(0)
+  expiresAt DateTime @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([phone, createdAt])
+  @@map("customer_otp_challenges")
+}
+
 model AdminUser {
   id String @id @default(uuid()) @db.Uuid
   username String @unique
@@ -220,7 +232,9 @@ model Order {
   statusHistory OrderStatusHistory[]
   outboxEvents OutboxEvent[]
   idempotencyRecord OrderIdempotency?
+  paymentAttempts PaymentAttempt[]
   @@index([idempotencyKey])
+  @@index([customerId, createdAt])
   @@index([createdAt])
   @@index([status])
   @@map("orders")
@@ -232,6 +246,23 @@ model OrderIdempotency {
   createdAt DateTime @default(now()) @map("created_at")
   order Order? @relation(fields:[orderId],references:[id],onDelete:Cascade)
   @@map("order_idempotency")
+}
+
+model PaymentAttempt {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  provider String
+  providerRef String? @map("provider_ref")
+  status String @default("CREATED")
+  amount Decimal @db.Decimal(12,2)
+  currency String @default("AED")
+  checkoutUrl String? @map("checkout_url")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  order Order @relation(fields:[orderId],references:[id],onDelete:Cascade)
+  @@unique([provider, providerRef])
+  @@index([orderId, createdAt])
+  @@map("payment_attempts")
 }
 
 model OrderItem {
