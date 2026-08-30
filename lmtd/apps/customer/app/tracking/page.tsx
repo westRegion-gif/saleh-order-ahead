@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppScreen, Header } from '../_components';
-import { CreatedOrder, getOrder } from '../_api';
+import { CreatedOrder, getOrder, OrderStatusSnapshot } from '../_api';
 import { readCustomerToken } from '../_auth';
 
 const FLOW = ['PAYMENT_PENDING', 'PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'COLLECTED', 'COMPLETED'];
@@ -12,11 +12,45 @@ const TERMINAL = new Set(['COMPLETED', 'CANCELLED', 'REJECTED', 'REFUNDED']);
 
 function label(status: string) {
   const labels: Record<string, string> = {
-    PAYMENT_PENDING: 'بانتظار تأكيد الدفع', PENDING: 'تم استلام الطلب', ACCEPTED: 'تم قبول الطلب', PREPARING: 'جاري التحضير',
-    READY: 'جاهز للاستلام', CUSTOMER_ARRIVED: 'تم تسجيل وصولك', COLLECTED: 'تم الاستلام', COMPLETED: 'اكتمل الطلب',
-    REJECTED: 'تم رفض الطلب', CANCELLED: 'تم إلغاء الطلب', PAYMENT_FAILED: 'فشل الدفع', REFUNDED: 'تم استرجاع المبلغ',
+    PAYMENT_PENDING: 'بانتظار تأكيد الدفع',
+    PAYMENT_CONFIRMED: 'تم تأكيد الدفع',
+    PENDING: 'تم استلام الطلب',
+    ACCEPTED: 'تم قبول الطلب',
+    PREPARING: 'جاري التحضير',
+    READY: 'جاهز للاستلام',
+    CUSTOMER_ARRIVED: 'تم تسجيل وصولك',
+    COLLECTED: 'تم الاستلام',
+    COMPLETED: 'اكتمل الطلب',
+    REJECTED: 'تم رفض الطلب',
+    CANCELLED: 'تم إلغاء الطلب',
+    PAYMENT_FAILED: 'فشل الدفع',
+    REFUNDED: 'تم استرجاع المبلغ',
   };
   return labels[status] || status;
+}
+
+type DisplayStatus = OrderStatusSnapshot & { displayStatus?: string };
+
+function buildDisplayHistory(history: OrderStatusSnapshot[]): DisplayStatus[] {
+  const output: DisplayStatus[] = [];
+  let sawPaymentPending = false;
+
+  for (const entry of history) {
+    if (entry.status === 'PAYMENT_PENDING') sawPaymentPending = true;
+
+    if (entry.status === 'PENDING' && sawPaymentPending) {
+      output.push({
+        ...entry,
+        id: `${entry.id}-payment-confirmed`,
+        displayStatus: 'PAYMENT_CONFIRMED',
+      });
+      sawPaymentPending = false;
+    }
+
+    output.push(entry);
+  }
+
+  return output;
 }
 
 export default function Tracking() {
@@ -73,6 +107,7 @@ export default function Tracking() {
 
   const currentIndex = useMemo(() => order ? FLOW.indexOf(order.status) : -1, [order]);
   const history = order?.statusHistory || [];
+  const displayHistory = useMemo(() => buildDisplayHistory(history), [history]);
 
   return (
     <AppScreen>
@@ -98,12 +133,15 @@ export default function Tracking() {
             )}
 
             <div className="statusList">
-              {history.length > 0 ? history.map((entry, index) => (
-                <div key={entry.id} className={index === history.length - 1 ? 'activeStatus' : 'doneStatus'}>
-                  <b>{label(entry.status)}</b>
-                  <span>{new Date(entry.createdAt).toLocaleString('ar-AE')}</span>
-                </div>
-              )) : <div className="activeStatus"><b>{label(order.status)}</b></div>}
+              {displayHistory.length > 0 ? displayHistory.map((entry, index) => {
+                const status = entry.displayStatus || entry.status;
+                return (
+                  <div key={entry.id} className={index === displayHistory.length - 1 ? 'activeStatus' : 'doneStatus'}>
+                    <b>{label(status)}</b>
+                    <span>{new Date(entry.createdAt).toLocaleString('ar-AE')}</span>
+                  </div>
+                );
+              }) : <div className="activeStatus"><b>{label(order.status)}</b></div>}
             </div>
 
             <div className="pickupInfo">
