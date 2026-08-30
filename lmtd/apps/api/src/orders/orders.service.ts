@@ -66,7 +66,7 @@ export class OrdersService {
     });
   }
 
-  async create(dto: CreateOrderDto) {
+  async create(dto: CreateOrderDto, customerId?: string) {
     const existing = await this.findExisting(dto.idempotencyKey);
     if (existing) return existing;
 
@@ -158,6 +158,7 @@ export class OrdersService {
           data: {
             orderNumber,
             idempotencyKey: dto.idempotencyKey,
+            customerId: customerId || null,
             branchId: dto.branchId,
             status: 'PAYMENT_PENDING',
             pickupMethod: dto.pickupMethod,
@@ -182,7 +183,7 @@ export class OrdersService {
           data: {
             orderId: order.id,
             eventType: 'ORDER_CREATED',
-            payload: { orderId: order.id, orderNumber: order.orderNumber, status: order.status },
+            payload: { orderId: order.id, orderNumber: order.orderNumber, status: order.status, customerId: customerId || null },
           },
         });
         return order;
