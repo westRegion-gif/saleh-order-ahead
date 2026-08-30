@@ -81,12 +81,23 @@ export class CustomerAuthService {
 
   async requestOtp(rawPhone: string) {
     const phone = this.normalizePhone(rawPhone);
+    const now = Date.now();
     const latest = await this.prisma.customerOtpChallenge.findFirst({ where: { phone }, orderBy: { createdAt: 'desc' } });
-    if (latest && Date.now() - latest.createdAt.getTime() < 60_000) throw new HttpException('انتظر دقيقة قبل طلب رمز جديد', HttpStatus.TOO_MANY_REQUESTS);
+    if (latest && now - latest.createdAt.getTime() < 60_000) throw new HttpException('انتظر دقيقة قبل طلب رمز جديد', HttpStatus.TOO_MANY_REQUESTS);
+
+    const recentCount = await this.prisma.customerOtpChallenge.count({
+      where: { phone, createdAt: { gte: new Date(now - 15 * 60_000) } },
+    });
+    if (recentCount >= 5) throw new HttpException('تم طلب رموز كثيرة. حاول مرة أخرى بعد قليل', HttpStatus.TOO_MANY_REQUESTS);
+
+    const dailyCount = await this.prisma.customerOtpChallenge.count({
+      where: { phone, createdAt: { gte: new Date(now - 24 * 60 * 60_000) } },
+    });
+    if (dailyCount >= 20) throw new HttpException('تم تجاوز حد رموز التحقق لهذا اليوم', HttpStatus.TOO_MANY_REQUESTS);
 
     const code = this.testCode() || String(randomInt(100000, 1000000));
     const challenge = await this.prisma.customerOtpChallenge.create({
-      data: { phone, codeHash: this.hash(phone, code), expiresAt: new Date(Date.now() + 5 * 60_000) },
+      data: { phone, codeHash: this.hash(phone, code), expiresAt: new Date(now + 5 * 60_000) },
     });
     try {
       await this.deliver(phone, code);
