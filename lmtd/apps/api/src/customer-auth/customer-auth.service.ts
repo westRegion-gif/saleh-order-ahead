@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, ServiceUnavailableException, TooManyRequestsException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -48,7 +48,7 @@ export class CustomerAuthService {
   async requestOtp(rawPhone: string) {
     const phone = this.normalizePhone(rawPhone);
     const latest = await this.prisma.customerOtpChallenge.findFirst({ where: { phone }, orderBy: { createdAt: 'desc' } });
-    if (latest && Date.now() - latest.createdAt.getTime() < 60_000) throw new TooManyRequestsException('انتظر دقيقة قبل طلب رمز جديد');
+    if (latest && Date.now() - latest.createdAt.getTime() < 60_000) throw new HttpException('انتظر دقيقة قبل طلب رمز جديد', HttpStatus.TOO_MANY_REQUESTS);
 
     const configuredTest = process.env.CUSTOMER_OTP_TEST_CODE?.trim();
     const code = configuredTest && /^\d{6}$/.test(configuredTest) ? configuredTest : String(randomInt(100000, 1000000));
