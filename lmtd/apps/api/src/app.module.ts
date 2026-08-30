@@ -7,11 +7,12 @@ import { AdminAuthModule } from './admin-auth/admin-auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { MediaModule } from './media/media.module';
 import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
 import { HealthController } from './health.controller';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, AdminAuthModule, CustomerAuthModule, BranchesModule, CatalogModule, AdminCatalogModule, MediaModule, OrdersModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, AdminAuthModule, CustomerAuthModule, BranchesModule, CatalogModule, AdminCatalogModule, MediaModule, OrdersModule, PaymentsModule],
   controllers: [HealthController],
 })
 export class AppModule {}
