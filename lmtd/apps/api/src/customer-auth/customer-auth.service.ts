@@ -27,13 +27,39 @@ export class CustomerAuthService {
     return value;
   }
 
+  private testCode() {
+    if (process.env.CUSTOMER_OTP_TEST_MODE !== 'true') return '';
+    const value = process.env.CUSTOMER_OTP_TEST_CODE?.trim() || '';
+    return /^\d{6}$/.test(value) ? value : '';
+  }
+
   private hash(phone: string, code: string) {
     return createHmac('sha256', this.pepper()).update(`${phone}:${code}`).digest('hex');
   }
 
-  private async deliver(phone: string, code: string) {
-    const testCode = process.env.CUSTOMER_OTP_TEST_CODE?.trim();
-    if (testCode) return;
+  private async deliverTwilio(phone: string, code: string) {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+    const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+    const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
+    const from = process.env.TWILIO_FROM_NUMBER?.trim();
+    if (!accountSid || !authToken || (!messagingServiceSid && !from)) throw new ServiceUnavailableException('Twilio SMS is not configured');
+
+    const body = new URLSearchParams();
+    body.set('To', phone);
+    body.set('Body', `LMTD verification code: ${code}`);
+    if (messagingServiceSid) body.set('MessagingServiceSid', messagingServiceSid);
+    else if (from) body.set('From', from);
+
+    const basic = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`, {
+      method: 'POST',
+      headers: { authorization: `Basic ${basic}`, 'content-type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    if (!response.ok) throw new ServiceUnavailableException('تعذر إرسال رمز التحقق حالياً');
+  }
+
+  private async deliverHttp(phone: string, code: string) {
     const url = process.env.SMS_PROVIDER_URL?.trim();
     const token = process.env.SMS_PROVIDER_TOKEN?.trim();
     if (!url || !token) throw new ServiceUnavailableException('SMS provider is not configured');
@@ -45,13 +71,20 @@ export class CustomerAuthService {
     if (!response.ok) throw new ServiceUnavailableException('تعذر إرسال رمز التحقق حالياً');
   }
 
+  private async deliver(phone: string, code: string) {
+    if (this.testCode()) return;
+    const provider = (process.env.SMS_PROVIDER || 'disabled').trim().toLowerCase();
+    if (provider === 'twilio') return this.deliverTwilio(phone, code);
+    if (provider === 'http') return this.deliverHttp(phone, code);
+    throw new ServiceUnavailableException('SMS provider is not enabled');
+  }
+
   async requestOtp(rawPhone: string) {
     const phone = this.normalizePhone(rawPhone);
     const latest = await this.prisma.customerOtpChallenge.findFirst({ where: { phone }, orderBy: { createdAt: 'desc' } });
     if (latest && Date.now() - latest.createdAt.getTime() < 60_000) throw new HttpException('انتظر دقيقة قبل طلب رمز جديد', HttpStatus.TOO_MANY_REQUESTS);
 
-    const configuredTest = process.env.CUSTOMER_OTP_TEST_CODE?.trim();
-    const code = configuredTest && /^\d{6}$/.test(configuredTest) ? configuredTest : String(randomInt(100000, 1000000));
+    const code = this.testCode() || String(randomInt(100000, 1000000));
     const challenge = await this.prisma.customerOtpChallenge.create({
       data: { phone, codeHash: this.hash(phone, code), expiresAt: new Date(Date.now() + 5 * 60_000) },
     });
