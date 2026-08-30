@@ -32,6 +32,12 @@ export class OrdersService {
     });
   }
 
+  private async taxRatePercent() {
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'tax_rate_percent' } });
+    const value = Number(setting?.value ?? 0);
+    return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 0;
+  }
+
   async create(dto: CreateOrderDto, customerId: string) {
     const existing = await this.findExisting(dto.idempotencyKey, customerId);
     if (existing) return existing;
@@ -111,10 +117,12 @@ export class OrdersService {
       });
     }
 
-    const subtotal = pricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+    const subtotal = Math.round(pricedItems.reduce((sum, item) => sum + item.lineTotal, 0) * 100) / 100;
     const discountTotal = 0;
-    const taxTotal = 0;
-    const total = subtotal - discountTotal + taxTotal;
+    const taxRate = await this.taxRatePercent();
+    const taxable = Math.max(0, subtotal - discountTotal);
+    const taxTotal = Math.round(taxable * taxRate) / 100;
+    const total = Math.round((taxable + taxTotal) * 100) / 100;
     const orderNumber = `LMTD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
     try {
@@ -150,7 +158,7 @@ export class OrdersService {
           data: {
             orderId: order.id,
             eventType: 'ORDER_CREATED',
-            payload: { orderId: order.id, orderNumber: order.orderNumber, customerId, status: order.status },
+            payload: { orderId: order.id, orderNumber: order.orderNumber, customerId, status: order.status, taxRatePercent: taxRate },
           },
         });
         return order;
@@ -160,6 +168,7 @@ export class OrdersService {
       if (code === 'P2002') {
         const duplicate = await this.findExisting(dto.idempotencyKey, customerId);
         if (duplicate) return duplicate;
+        throw new BadRequestException('Checkout idempotency key conflict');
       }
       throw error;
     }
