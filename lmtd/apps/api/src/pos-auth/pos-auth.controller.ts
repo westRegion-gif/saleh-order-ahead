@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { AdminAuthGuard } from '../admin-auth/admin-auth.guard';
-import { PosLoginDto, PosMachineStatusDto } from './pos-auth.dto';
+import { PosLoginDto, PosMachineCredentialsDto, PosMachineStatusDto } from './pos-auth.dto';
 import { PosAuthGuard } from './pos-auth.guard';
 import { PosAuthService } from './pos-auth.service';
 
@@ -30,14 +30,12 @@ export class PosMachineAdminController {
     return this.auth.listMachines();
   }
 
-  @Post('provision-all')
-  provisionAll() {
-    return this.auth.provisionAll();
-  }
-
-  @Post(':branchId/provision')
-  provision(@Param('branchId', new ParseUUIDPipe()) branchId: string) {
-    return this.auth.provision(branchId);
+  @Put(':branchId')
+  save(
+    @Param('branchId', new ParseUUIDPipe()) branchId: string,
+    @Body() dto: PosMachineCredentialsDto,
+  ) {
+    return this.auth.saveMachine(branchId, dto.username, dto.password);
   }
 
   @Patch(':branchId')
