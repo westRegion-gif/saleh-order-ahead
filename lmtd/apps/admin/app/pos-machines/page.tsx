@@ -5,18 +5,93 @@ import './pos-machines.css';
 
 const API=(process.env.NEXT_PUBLIC_API_URL||'http://localhost:3000/v1').replace(/\/$/,'');
 type Row={branch:{id:string;code:string;nameAr:string;nameEn?:string|null;isActive:boolean};machine:{id:string;username:string;isActive:boolean;lastLoginAt?:string|null}|null};
-type Secret={username:string;password:string};
+type FormState={username:string;password:string};
 
 export default function PosMachinesPage(){
- const [token,setToken]=useState('');const [ready,setReady]=useState(false);const [rows,setRows]=useState<Row[]>([]);const [message,setMessage]=useState('');const [secrets,setSecrets]=useState<Record<string,Secret>>({});const [busy,setBusy]=useState('');
+ const [token,setToken]=useState('');
+ const [ready,setReady]=useState(false);
+ const [rows,setRows]=useState<Row[]>([]);
+ const [forms,setForms]=useState<Record<string,FormState>>({});
+ const [message,setMessage]=useState('');
+ const [busy,setBusy]=useState('');
+
  useEffect(()=>{setToken(sessionStorage.getItem('lmtd_admin_token')||'');setReady(true)},[]);
- async function load(){if(!token)return;setBusy('load');try{const r=await fetch(`${API}/admin/pos-machines`,{headers:{Authorization:`Bearer ${token}`},cache:'no-store'});if(r.status===401){sessionStorage.removeItem('lmtd_admin_token');setToken('');return}if(!r.ok)throw new Error();setRows(await r.json());setMessage('')}catch{setMessage('تعذر تحميل حسابات أجهزة الفروع.')}finally{setBusy('')}}
+
+ async function load(){
+  if(!token)return;
+  setBusy('load');
+  try{
+   const r=await fetch(`${API}/admin/pos-machines`,{headers:{Authorization:`Bearer ${token}`},cache:'no-store'});
+   if(r.status===401){sessionStorage.removeItem('lmtd_admin_token');setToken('');return}
+   if(!r.ok)throw new Error();
+   const data:Row[]=await r.json();
+   setRows(data);
+   setForms(current=>{
+    const next={...current};
+    for(const row of data){
+      const existing=next[row.branch.id];
+      next[row.branch.id]={username:existing?.username||row.machine?.username||'',password:existing?.password||''};
+    }
+    return next;
+   });
+   setMessage('');
+  }catch{setMessage('تعذر تحميل حسابات أجهزة الفروع.')}finally{setBusy('')}
+ }
+
  useEffect(()=>{if(token)void load()},[token]);
- async function provision(branchId:string){setBusy(branchId);setMessage('');try{const r=await fetch(`${API}/admin/pos-machines/${branchId}/provision`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error();const d=await r.json();setSecrets(s=>({...s,[branchId]:{username:d.machine.username,password:d.temporaryPassword}}));await load()}catch{setMessage('تعذر توليد بيانات دخول هذا الجهاز.')}finally{setBusy('')}}
- async function provisionAll(){setBusy('all');setMessage('');try{const r=await fetch(`${API}/admin/pos-machines/provision-all`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error();const data=await r.json();const next:Record<string,Secret>={};for(const d of data)next[d.machine.branchId]={username:d.machine.username,password:d.temporaryPassword};setSecrets(next);await load();setMessage('تم توليد بيانات دخول جديدة لكل أجهزة الفروع. انسخها الآن؛ كلمات المرور لن تظهر مرة ثانية.')}catch{setMessage('تعذر توليد جميع الحسابات.')}finally{setBusy('')}}
- async function toggle(row:Row){if(!row.machine)return;setBusy(row.branch.id);try{const r=await fetch(`${API}/admin/pos-machines/${row.branch.id}`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({isActive:!row.machine.isActive})});if(!r.ok)throw new Error();await load()}catch{setMessage('تعذر تغيير حالة الحساب.')}finally{setBusy('')}}
- async function copy(text:string){try{await navigator.clipboard.writeText(text);setMessage('تم النسخ.')}catch{setMessage('تعذر النسخ تلقائياً.')}}
+
+ function change(branchId:string,key:keyof FormState,value:string){
+  setForms(current=>({...current,[branchId]:{username:current[branchId]?.username||'',password:current[branchId]?.password||'',[key]:value}}));
+ }
+
+ async function save(row:Row){
+  const form=forms[row.branch.id];
+  if(!form?.username.trim()||form.password.length<6){setMessage('اكتب Username وكلمة مرور من 6 أحرف على الأقل.');return}
+  setBusy(row.branch.id);setMessage('');
+  try{
+   const r=await fetch(`${API}/admin/pos-machines/${row.branch.id}`,{
+    method:'PUT',
+    headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+    body:JSON.stringify({username:form.username.trim(),password:form.password}),
+   });
+   const body=await r.json().catch(()=>null);
+   if(!r.ok)throw new Error(Array.isArray(body?.message)?body.message.join(', '):body?.message||'تعذر حفظ الحساب.');
+   setForms(current=>({...current,[row.branch.id]:{username:body.username||form.username.trim(),password:''}}));
+   await load();
+   setMessage(`تم حفظ حساب POS لفرع ${row.branch.nameEn||row.branch.nameAr}.`);
+  }catch(e){setMessage(e instanceof Error?e.message:'تعذر حفظ الحساب.')}finally{setBusy('')}
+ }
+
+ async function toggle(row:Row){
+  if(!row.machine)return;
+  setBusy(row.branch.id);
+  try{
+   const r=await fetch(`${API}/admin/pos-machines/${row.branch.id}`,{
+    method:'PATCH',
+    headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+    body:JSON.stringify({isActive:!row.machine.isActive}),
+   });
+   if(!r.ok)throw new Error();
+   await load();
+  }catch{setMessage('تعذر تغيير حالة الحساب.')}finally{setBusy('')}
+ }
+
  if(!ready)return null;
  if(!token)return <main className="pmLogin"><section><b>LMTD</b><h1>POS Machines</h1><p>Owner access is required.</p><a href="/">Go to owner login</a></section></main>;
- return <main className="pmPage"><header className="pmTop"><div><small>LMTD CONTROL</small><h1>Branch POS Accounts</h1><p>كل جهاز مقيد على فرع واحد من السيرفر نفسه.</p></div><div><a href="/live-orders">Staff / POS</a><a href="/">Owner console</a></div></header>{message&&<div className="pmNotice">{message}</div>}<section className="pmActions"><button onClick={()=>void load()} disabled={!!busy}>Refresh</button><button className="primary" onClick={provisionAll} disabled={!!busy}>{busy==='all'?'Generating…':'Generate / Reset all credentials'}</button></section><div className="pmWarning"><b>Security:</b> كلمات المرور المؤقتة تظهر مرة واحدة فقط. بعد مغادرة الصفحة لا يمكن استرجاعها؛ فقط توليد كلمة جديدة.</div><section className="pmGrid">{rows.map(row=>{const secret=secrets[row.branch.id];return <article key={row.branch.id}><header><div><small>{row.branch.code}</small><h2>{row.branch.nameEn||row.branch.nameAr}</h2></div><span className={row.machine?.isActive?'on':'off'}>{row.machine?.isActive?'ACTIVE':'SETUP / DISABLED'}</span></header><div className="pmMeta"><span>Username</span><b>{row.machine?.username||'Not created yet'}</b><span>Last login</span><b>{row.machine?.lastLoginAt?new Date(row.machine.lastLoginAt).toLocaleString('en-AE'):'Never'}</b></div>{secret&&<div className="pmSecret"><span>Temporary credentials — copy now</span><code>{secret.username}</code><code>{secret.password}</code><button onClick={()=>copy(`${secret.username}\n${secret.password}`)}>Copy credentials</button></div>}<footer><button onClick={()=>provision(row.branch.id)} disabled={!!busy}>{busy===row.branch.id?'Working…':row.machine?.isActive?'Reset password':'Activate & generate password'}</button>{row.machine&&<button onClick={()=>toggle(row)} disabled={!!busy}>{row.machine.isActive?'Disable device':'Enable device'}</button>}</footer></article>})}</section></main>
+
+ return <main className="pmPage">
+  <header className="pmTop"><div><small>LMTD CONTROL</small><h1>Branch POS Accounts</h1><p>حدد اليوزر والباسورد لكل فرع واحفظه مباشرة.</p></div><div><a href="/live-orders">Staff / POS</a><a href="/">Owner console</a></div></header>
+  {message&&<div className="pmNotice">{message}</div>}
+  <section className="pmActions"><button onClick={()=>void load()} disabled={!!busy}>{busy==='load'?'Refreshing…':'Refresh'}</button></section>
+  <section className="pmGrid">{rows.map(row=>{const form=forms[row.branch.id]||{username:row.machine?.username||'',password:''};return <article key={row.branch.id}>
+   <header><div><small>{row.branch.code}</small><h2>{row.branch.nameEn||row.branch.nameAr}</h2></div><span className={row.machine?.isActive?'on':'off'}>{row.machine?.isActive?'ACTIVE':'NOT ACTIVE'}</span></header>
+   <div className="pmForm">
+    <label>Username<input value={form.username} onChange={e=>change(row.branch.id,'username',e.target.value)} placeholder="e.g. marsa-pos" autoComplete="off"/></label>
+    <label>Password<input value={form.password} onChange={e=>change(row.branch.id,'password',e.target.value)} type="password" placeholder={row.machine?'Enter new password to save':'Choose password'} autoComplete="new-password"/></label>
+    <button className="primary" onClick={()=>void save(row)} disabled={!!busy}>{busy===row.branch.id?'Saving…':row.machine?'Save / Update POS Account':'Create POS Account'}</button>
+   </div>
+   <div className="pmMeta"><span>Current username</span><b>{row.machine?.username||'Not created yet'}</b><span>Last login</span><b>{row.machine?.lastLoginAt?new Date(row.machine.lastLoginAt).toLocaleString('en-AE'):'Never'}</b></div>
+   {row.machine&&<footer><button onClick={()=>void toggle(row)} disabled={!!busy}>{row.machine.isActive?'Disable account':'Enable account'}</button></footer>}
+  </article>})}</section>
+ </main>
 }
