@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly realtime: RealtimeService) {}
 
   private stripeSecret() {
     const value = process.env.STRIPE_SECRET_KEY?.trim();
@@ -149,27 +150,43 @@ export class PaymentsService {
     if (!attempt) return { received: true };
 
     if (event.type === 'payment_intent.succeeded') {
-      await this.prisma.$transaction(async (tx) => {
+      const changed = await this.prisma.$transaction(async (tx) => {
         const currentOrder = await tx.order.findUnique({ where: { id: attempt.orderId } });
         await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: 'SUCCEEDED', failureReason: null } });
-        if (currentOrder?.status === 'PAYMENT_PENDING' || currentOrder?.status === 'PAYMENT_FAILED') {
-          await tx.order.update({ where: { id: attempt.orderId }, data: { status: 'PENDING' } });
-          await tx.orderStatusHistory.create({ data: { orderId: attempt.orderId, status: 'PENDING', note: 'Payment confirmed' } });
-          await tx.outboxEvent.create({ data: { orderId: attempt.orderId, eventType: 'PAYMENT_SUCCEEDED', payload: { orderId: attempt.orderId, paymentAttemptId: attempt.id, providerReference } } });
-        }
+        if (currentOrder?.status !== 'PAYMENT_PENDING' && currentOrder?.status !== 'PAYMENT_FAILED') return null;
+
+        const order = await tx.order.update({ where: { id: attempt.orderId }, data: { status: 'PENDING' } });
+        await tx.orderStatusHistory.create({ data: { orderId: attempt.orderId, status: 'PENDING', note: 'Payment confirmed' } });
+        await tx.outboxEvent.create({
+          data: { orderId: attempt.orderId, eventType: 'PAYMENT_SUCCEEDED', payload: { orderId: attempt.orderId, paymentAttemptId: attempt.id, providerReference } },
+        });
+        const printEvent = await tx.outboxEvent.create({
+          data: {
+            orderId: attempt.orderId,
+            eventType: 'PRINT_RECEIPT',
+            payload: { status: 'PENDING', source: 'PAYMENT_SUCCEEDED', orderId: attempt.orderId, orderNumber: order.orderNumber, branchId: order.branchId, requestedAt: new Date().toISOString() },
+          },
+        });
+        return { order, printEvent };
       });
+
+      if (changed) {
+        this.realtime.emitOrderUpdate(changed.order, { newOrder: true });
+        this.realtime.emitPrintJob({ ...changed.printEvent, branchId: changed.order.branchId });
+      }
     }
 
     if (event.type === 'payment_intent.payment_failed') {
-      await this.prisma.$transaction(async (tx) => {
+      const changed = await this.prisma.$transaction(async (tx) => {
         await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: 'FAILED', failureReason: String(intent?.last_payment_error?.message || 'Payment failed').slice(0, 500) } });
         const currentOrder = await tx.order.findUnique({ where: { id: attempt.orderId } });
-        if (currentOrder?.status === 'PAYMENT_PENDING') {
-          await tx.order.update({ where: { id: attempt.orderId }, data: { status: 'PAYMENT_FAILED' } });
-          await tx.orderStatusHistory.create({ data: { orderId: attempt.orderId, status: 'PAYMENT_FAILED', note: 'Payment failed' } });
-          await tx.outboxEvent.create({ data: { orderId: attempt.orderId, eventType: 'PAYMENT_FAILED', payload: { orderId: attempt.orderId, paymentAttemptId: attempt.id } } });
-        }
+        if (currentOrder?.status !== 'PAYMENT_PENDING') return null;
+        const order = await tx.order.update({ where: { id: attempt.orderId }, data: { status: 'PAYMENT_FAILED' } });
+        await tx.orderStatusHistory.create({ data: { orderId: attempt.orderId, status: 'PAYMENT_FAILED', note: 'Payment failed' } });
+        await tx.outboxEvent.create({ data: { orderId: attempt.orderId, eventType: 'PAYMENT_FAILED', payload: { orderId: attempt.orderId, paymentAttemptId: attempt.id } } });
+        return order;
       });
+      if (changed) this.realtime.emitOrderUpdate(changed);
     }
 
     return { received: true };

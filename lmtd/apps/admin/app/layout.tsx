@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import './globals.css';
 import AdminDomCleanup from './AdminDomCleanup';
+import OpsQuickLink from './OpsQuickLink';
 export const metadata = { title: 'LMTD Operations' };
 const mobileEditorFix = `
 @media (max-width: 760px) {
@@ -34,4 +35,4 @@ const mobileEditorFix = `
   }
 }
 `;
-export default function RootLayout({children}:{children:ReactNode}){return <html lang="en"><body><style>{mobileEditorFix}</style><AdminDomCleanup/>{children}</body></html>}
+export default function RootLayout({children}:{children:ReactNode}){return <html lang="en"><body><style>{mobileEditorFix}</style><AdminDomCleanup/><OpsQuickLink/>{children}</body></html>}
