@@ -1,0 +1,57 @@
+name: Build LMTD POS APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'lmtd/apps/pos-android/**'
+      - '.github/workflows/build-pos-apk.yml'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download Telpo printer runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='lmtd/apps/pos-android/app'
+          BASE='https://raw.githubusercontent.com/aljanshere/telpo-flutter-sdk/master/android/src'
+          mkdir -p "$ROOT/libs"
+          curl -fsSL "$BASE/libs/telpo_api.jar" -o "$ROOT/libs/telpo_api.jar"
+          for ABI in arm64-v8a armeabi-v7a; do
+            mkdir -p "$ROOT/src/main/jniLibs/$ABI"
+            for LIB in libtelpo_printer.so libtelpo_printer5880.so libtelpo_printer_581.so libtelpo_printer_48.so libusb_util.so libusbtest.so libtelpo_serial.so; do
+              curl -fsSL "$BASE/main/jniLibs/$ABI/$LIB" -o "$ROOT/src/main/jniLibs/$ABI/$LIB"
+            done
+          done
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build APK
+        working-directory: lmtd/apps/pos-android
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Prepare artifact
+        run: cp lmtd/apps/pos-android/app/build/outputs/apk/debug/app-debug.apk LMTD-POS-Telpo-M1.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LMTD-POS-Telpo-M1
+          path: LMTD-POS-Telpo-M1.apk
+          if-no-files-found: error
