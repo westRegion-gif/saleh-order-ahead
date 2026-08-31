@@ -6,7 +6,17 @@ export class PosLoginDto {
   username!: string;
 
   @IsString()
-  @Length(8, 160)
+  @Length(6, 160)
+  password!: string;
+}
+
+export class PosMachineCredentialsDto {
+  @IsString()
+  @Length(3, 80)
+  username!: string;
+
+  @IsString()
+  @Length(6, 160)
   password!: string;
 }
 
