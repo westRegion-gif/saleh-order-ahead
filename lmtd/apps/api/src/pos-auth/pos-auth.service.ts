@@ -1,7 +1,6 @@
-import { Injectable, NotFoundException, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
-import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 const POS_PREFIX = 'POS:';
@@ -14,35 +13,9 @@ function branchIdFromRole(role: string) {
   return role.startsWith(POS_PREFIX) ? role.slice(POS_PREFIX.length) : null;
 }
 
-function usernameFromCode(code: string) {
-  const clean = code.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  return `pos-${clean || 'branch'}`;
-}
-
-function temporaryPassword() {
-  return `Lm!${randomBytes(9).toString('base64url')}`;
-}
-
 @Injectable()
-export class PosAuthService implements OnModuleInit {
+export class PosAuthService {
   constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService) {}
-
-  async onModuleInit() {
-    const branches = await this.prisma.branch.findMany({ where: { isActive: true }, select: { id: true, code: true } });
-    let created = 0;
-    for (const branch of branches) {
-      const role = roleForBranch(branch.id);
-      const existing = await this.prisma.adminUser.findFirst({ where: { role } });
-      if (existing) continue;
-      let username = usernameFromCode(branch.code);
-      const collision = await this.prisma.adminUser.findUnique({ where: { username } });
-      if (collision) username = `${username}-${branch.id.slice(0, 6)}`;
-      const passwordHash = await argon2.hash(randomBytes(32).toString('hex'), { type: argon2.argon2id });
-      await this.prisma.adminUser.create({ data: { username, passwordHash, role, isActive: false } });
-      created += 1;
-    }
-    console.log(`[pos] branch machine accounts ensured: ${branches.length} total, ${created} created`);
-  }
 
   async login(username: string, password: string) {
     const user = await this.prisma.adminUser.findUnique({ where: { username: username.trim() } });
@@ -91,32 +64,35 @@ export class PosAuthService implements OnModuleInit {
     });
   }
 
-  async provision(branchId: string) {
+  async saveMachine(branchId: string, username: string, password: string) {
     const branch = await this.prisma.branch.findUnique({ where: { id: branchId } });
     if (!branch) throw new NotFoundException('Branch not found');
-    const role = roleForBranch(branch.id);
-    let user = await this.prisma.adminUser.findFirst({ where: { role } });
-    const password = temporaryPassword();
-    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
-    if (user) {
-      user = await this.prisma.adminUser.update({ where: { id: user.id }, data: { passwordHash, isActive: true } });
-    } else {
-      let username = usernameFromCode(branch.code);
-      if (await this.prisma.adminUser.findUnique({ where: { username } })) username = `${username}-${branch.id.slice(0, 6)}`;
-      user = await this.prisma.adminUser.create({ data: { username, passwordHash, role, isActive: true } });
-    }
-    return {
-      machine: { id: user.id, username: user.username, isActive: user.isActive, branchId: branch.id, branchName: branch.nameEn || branch.nameAr },
-      temporaryPassword: password,
-      warning: 'This temporary password is returned once. Store it securely on the branch device.',
-    };
-  }
 
-  async provisionAll() {
-    const branches = await this.prisma.branch.findMany({ where: { isActive: true }, orderBy: { code: 'asc' }, select: { id: true } });
-    const results = [];
-    for (const branch of branches) results.push(await this.provision(branch.id));
-    return results;
+    const cleanUsername = username.trim();
+    const role = roleForBranch(branchId);
+    const current = await this.prisma.adminUser.findFirst({ where: { role } });
+    const usernameOwner = await this.prisma.adminUser.findUnique({ where: { username: cleanUsername } });
+    if (usernameOwner && usernameOwner.id !== current?.id) {
+      throw new ConflictException('Username is already in use');
+    }
+
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    const user = current
+      ? await this.prisma.adminUser.update({
+          where: { id: current.id },
+          data: { username: cleanUsername, passwordHash, isActive: true },
+        })
+      : await this.prisma.adminUser.create({
+          data: { username: cleanUsername, passwordHash, role, isActive: true },
+        });
+
+    return {
+      id: user.id,
+      username: user.username,
+      isActive: user.isActive,
+      branchId,
+      branchName: branch.nameEn || branch.nameAr,
+    };
   }
 
   async setActive(branchId: string, isActive: boolean) {
