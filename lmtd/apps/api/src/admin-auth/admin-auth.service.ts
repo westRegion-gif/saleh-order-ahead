@@ -23,11 +23,11 @@ export class AdminAuthService implements OnModuleInit {
 
   async login(username: string, password: string) {
     const user = await this.prisma.adminUser.findUnique({ where: { username } });
-    if (!user || !user.isActive || !(await argon2.verify(user.passwordHash, password))) {
+    if (!user || !user.isActive || user.role !== 'OWNER' || !(await argon2.verify(user.passwordHash, password))) {
       throw new UnauthorizedException('Invalid credentials');
     }
     await this.prisma.adminUser.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    const accessToken = await this.jwt.signAsync({ sub: user.id, username: user.username, role: user.role });
+    const accessToken = await this.jwt.signAsync({ sub: user.id, username: user.username, role: user.role, typ: 'owner' });
     return { accessToken, user: { id: user.id, username: user.username, role: user.role } };
   }
 }

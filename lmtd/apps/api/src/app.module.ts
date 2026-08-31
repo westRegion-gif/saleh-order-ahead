@@ -9,12 +9,13 @@ import { MediaModule } from './media/media.module';
 import { OperationsModule } from './operations/operations.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
+import { PosAuthModule } from './pos-auth/pos-auth.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { HealthController } from './health.controller';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, RealtimeModule, AdminAuthModule, CustomerAuthModule, BranchesModule, CatalogModule, AdminCatalogModule, MediaModule, OrdersModule, PaymentsModule, OperationsModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, RealtimeModule, AdminAuthModule, PosAuthModule, CustomerAuthModule, BranchesModule, CatalogModule, AdminCatalogModule, MediaModule, OrdersModule, PaymentsModule, OperationsModule],
   controllers: [HealthController],
 })
 export class AppModule {}

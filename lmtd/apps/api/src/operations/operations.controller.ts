@@ -1,37 +1,42 @@
-import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { AdminAuthGuard } from '../admin-auth/admin-auth.guard';
+import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { CustomerAuthService } from '../customer-auth/customer-auth.service';
+import { OperationsActor, OperationsAuthGuard } from '../pos-auth/pos-auth.guard';
 import { UpdateOperationalOrderStatusDto, UpdatePrintJobDto } from './operations.dto';
 import { OperationsService } from './operations.service';
 
-@UseGuards(AdminAuthGuard)
+@UseGuards(OperationsAuthGuard)
 @Controller('admin/operations')
 export class OperationsController {
   constructor(private readonly operations: OperationsService) {}
 
+  private branchScope(req: any, requestedBranchId?: string) {
+    const actor = req.operator as OperationsActor;
+    return actor.kind === 'pos' ? actor.branchId : requestedBranchId;
+  }
+
   @Get('orders')
-  orders(@Query('branchId') branchId?: string, @Query('scope') scope?: string) {
-    return this.operations.listOrders(branchId, scope || 'live');
+  orders(@Req() req: any, @Query('branchId') branchId?: string, @Query('scope') scope?: string) {
+    return this.operations.listOrders(this.branchScope(req, branchId), scope || 'live');
   }
 
   @Patch('orders/:id/status')
-  updateOrderStatus(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: UpdateOperationalOrderStatusDto) {
-    return this.operations.updateStatus(id, dto.status, dto.note);
+  updateOrderStatus(@Req() req: any, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: UpdateOperationalOrderStatusDto) {
+    return this.operations.updateStatus(id, dto.status, dto.note, this.branchScope(req));
   }
 
   @Post('orders/:id/print')
-  printOrder(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.operations.requestPrint(id);
+  printOrder(@Req() req: any, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.operations.requestPrint(id, 'MANUAL', this.branchScope(req));
   }
 
   @Get('print-jobs')
-  printJobs(@Query('branchId') branchId?: string) {
-    return this.operations.listPrintJobs(branchId);
+  printJobs(@Req() req: any, @Query('branchId') branchId?: string) {
+    return this.operations.listPrintJobs(this.branchScope(req, branchId));
   }
 
   @Patch('print-jobs/:id')
-  updatePrintJob(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: UpdatePrintJobDto) {
-    return this.operations.updatePrintJob(id, dto.status as 'PRINTING' | 'COMPLETED' | 'FAILED', dto.error);
+  updatePrintJob(@Req() req: any, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: UpdatePrintJobDto) {
+    return this.operations.updatePrintJob(id, dto.status as 'PRINTING' | 'COMPLETED' | 'FAILED', dto.error, this.branchScope(req));
   }
 }
 

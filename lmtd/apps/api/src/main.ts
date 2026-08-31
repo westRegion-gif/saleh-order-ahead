@@ -26,11 +26,7 @@ async function bootstrap(){
   const prisma=app.get(PrismaService);
   const realtime=app.get(RealtimeService);
   const jwt=new JwtService();
-  const io=new Server(app.getHttpServer(),{
-    path:'/socket.io',
-    serveClient:true,
-    cors:{origin:origins,credentials:true},
-  });
+  const io=new Server(app.getHttpServer(),{path:'/socket.io',serveClient:true,cors:{origin:origins,credentials:true}});
 
   io.use(async (socket,next)=>{
     const token=String(socket.handshake.auth?.token||'').trim();
@@ -50,21 +46,26 @@ async function bootstrap(){
     const adminSecret=(process.env.ADMIN_JWT_SECRET||process.env.JWT_ACCESS_SECRET||'').trim();
     if(adminSecret){
       try{
-        const payload=await jwt.verifyAsync<{sub:string;role?:string}>(token,{secret:adminSecret});
-        const admin=await prisma.adminUser.findFirst({where:{id:payload.sub,isActive:true,role:'OWNER'},select:{id:true}});
-        if(admin){socket.data.identity={kind:'admin',id:admin.id};return next();}
+        const payload=await jwt.verifyAsync<{sub:string}>(token,{secret:adminSecret});
+        const admin=await prisma.adminUser.findFirst({where:{id:payload.sub,isActive:true},select:{id:true,role:true}});
+        if(admin?.role==='OWNER'){socket.data.identity={kind:'admin',id:admin.id};return next();}
+        if(admin?.role?.startsWith('POS:')){
+          const branchId=admin.role.slice(4);
+          const branch=await prisma.branch.findFirst({where:{id:branchId,isActive:true},select:{id:true}});
+          if(branch){socket.data.identity={kind:'pos',id:admin.id,branchId};return next();}
+        }
       }catch{}
     }
-
     return next(new Error('unauthorized'));
   });
 
   io.on('connection',(socket)=>{
-    const identity=socket.data.identity as {kind:'customer'|'admin';id:string}|undefined;
+    const identity=socket.data.identity as {kind:'customer'|'admin'|'pos';id:string;branchId?:string}|undefined;
     if(!identity){socket.disconnect(true);return;}
     if(identity.kind==='customer')socket.join(`customer:${identity.id}`);
     if(identity.kind==='admin')socket.join('admin:all');
-    socket.emit('realtime:ready',{role:identity.kind});
+    if(identity.kind==='pos'&&identity.branchId)socket.join(`branch:${identity.branchId}`);
+    socket.emit('realtime:ready',{role:identity.kind,branchId:identity.branchId??null});
   });
 
   realtime.bindServer(io);

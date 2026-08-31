@@ -40,9 +40,9 @@ export class RealtimeService {
       total: order.total == null ? null : Number(order.total),
       updatedAt: order.updatedAt instanceof Date ? order.updatedAt.toISOString() : order.updatedAt ?? new Date().toISOString(),
     };
-
-    this.server.to('admin:all').emit(options.newOrder ? 'order:new' : 'order:update', payload);
-    this.server.to(`branch:${order.branchId}`).emit('order:update', payload);
+    const event = options.newOrder ? 'order:new' : 'order:update';
+    this.server.to('admin:all').emit(event, payload);
+    this.server.to(`branch:${order.branchId}`).emit(event, payload);
     if (order.customerId) this.server.to(`customer:${order.customerId}`).emit('order:update', payload);
   }
 
