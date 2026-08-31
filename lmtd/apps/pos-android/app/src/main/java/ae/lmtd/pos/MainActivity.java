@@ -43,7 +43,7 @@ public class MainActivity extends Activity {
         settings.setSupportMultipleWindows(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " LMTD-POS/0.1 Telpo-M1");
+        settings.setUserAgentString(settings.getUserAgentString() + " LMTD-POS/0.1.1 Telpo-M1");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -55,15 +55,32 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                injectNativeMarker();
+                injectNativeBridge();
             }
         });
         webView.loadUrl(BuildConfig.POS_URL);
     }
 
-    private void injectNativeMarker() {
-        String js = "window.__LMTD_NATIVE_POS__=true;" +
-                "document.documentElement.dataset.lmtdNative='telpo';";
+    private void injectNativeBridge() {
+        String js = "(function(){" +
+                "window.__LMTD_NATIVE_POS__=true;" +
+                "document.documentElement.dataset.lmtdNative='telpo';" +
+                "if(window.__LMTD_NATIVE_PRINT_PATCHED__)return;" +
+                "window.__LMTD_NATIVE_PRINT_PATCHED__=true;" +
+                "var originalOpen=window.open;" +
+                "window.open=function(url,target,features){" +
+                "if((url||'')===''&&target==='_blank'&&window.LMTDPrinter){" +
+                "var html='';" +
+                "var fake={onafterprint:null," +
+                "document:{open:function(){html='';},write:function(v){html+=String(v||'');},close:function(){}}," +
+                "focus:function(){},close:function(){}," +
+                "print:function(){var result=String(window.LMTDPrinter.printHtml(html));" +
+                "if(result.indexOf('OK')===0){if(typeof fake.onafterprint==='function')fake.onafterprint();}" +
+                "else{alert('Telpo printer: '+result);}}};" +
+                "return fake;}" +
+                "return originalOpen?originalOpen.apply(window,arguments):null;" +
+                "};" +
+                "})();";
         webView.evaluateJavascript(js, null);
     }
 
